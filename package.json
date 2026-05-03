@@ -1,0 +1,45 @@
+{
+  "name": "squad-code",
+  "version": "1.0.0",
+  "description": "Provider-neutral local-first CLI agent: streaming, tool use, sessions, permissions across DeepSeek, OpenAI, and Anthropic.",
+  "license": "MIT",
+  "author": "Cid",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch bin/squad.ts",
+    "build": "tsc",
+    "build:watch": "tsc --watch --preserveWatchOutput",
+    "prepare": "tsc",
+    "start": "node dist/bin/squad.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "bin": {
+    "squad": "./dist/bin/squad.js",
+    "squadcode": "./dist/bin/squad.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.7",
+    "ink": "^5.0.1",
+    "ink-text-input": "^6.0.0",
+    "openai": "^4.79.0",
+    "pino": "^9.6.0",
+    "pino-roll": "^3.0.0",
+    "react": "^18.3.1",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.12",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
