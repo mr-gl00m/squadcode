@@ -1,6 +1,13 @@
-# Squad Code
-
-I needed a better way to use APIs and local models for coding and whatnot. So I made this. This is a local-first CLI agent that streams from any provider through one canonical event loop.
+```
+   ███████╗ ██████╗ ██╗   ██╗ █████╗ ██████╗      ██████╗ ██████╗ ██████╗ ███████╗
+   ██╔════╝██╔═══██╗██║   ██║██╔══██╗██╔══██╗    ██╔════╝██╔═══██╗██╔══██╗██╔════╝
+   ███████╗██║   ██║██║   ██║███████║██║  ██║    ██║     ██║   ██║██║  ██║█████╗    
+   ╚════██║██║▄▄ ██║██║   ██║██╔══██║██║  ██║    ██║     ██║   ██║██║  ██║██╔══╝      
+   ███████║╚██████╔╝╚██████╔╝██║  ██║██████╔╝    ╚██████╗╚██████╔╝██████╔╝███████╗  
+   ╚══════╝ ╚══▀▀═╝  ╚═════╝ ╚═╝  ╚═╝╚═════╝      ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝  
+   --------------------------------------------------------------------------------
+```
+I needed a better way to use LLM APIs and local models for coding and whatnot in my day to day. Codex is slow and feels like a mess. So I made this. This is a local CLI agent that streams from any provider through one canonical event loop.
 
 ```text
 $ squadcode -p "summarize src/"
@@ -25,7 +32,7 @@ model switched to deepseek-v4-pro
 
 ## What it is
 
-Squad Code is the modern streaming-agent CLI shape; streaming chat, tool use, sessions, ask/allow/deny permissions, JSONL transcripts; wired to any frontier model behind one `LLMProvider` interface. Every provider stream gets normalized into a single `CanonicalEvent` union (`text_delta`, `tool_call_done`, `tool_result`, `usage`, `done`, `error`); the agent loop never sees provider-specific wire formats. MVP backend is DeepSeek; Ollama works for local inference today; OpenAI and Anthropic adapters are post-MVP. It exists because vetting local models against real tool-use loops needs a harness that doesn't smuggle in provider-specific assumptions, and the existing options either tie themselves to one vendor or skip the agent loop entirely. I intend on adding additional model options and features in the future. 
+Squad Code is the modern streaming-agent CLI shape: streaming chat, tool use, sessions, ask/allow/deny permissions, JSONL transcripts; wired to any frontier model behind one `LLMProvider` interface. Every provider stream gets normalized into a single `CanonicalEvent` union (`text_delta`, `tool_call_done`, `tool_result`, `usage`, `done`, `error`); the agent loop never sees provider-specific wire formats. MVP backend is DeepSeek; Ollama works for local inference today; OpenAI and Anthropic adapters are post-MVP. It exists because vetting local models against real tool-use loops needs a harness that doesn't smuggle in provider-specific assumptions, and the existing options either tie themselves to one vendor or skip the agent loop entirely. I intend on adding additional model options and features in the future. 
 
 ## Quickstart
 
@@ -91,7 +98,7 @@ OpenAI and Anthropic adapters are post-MVP; both are pending in the v1.x cycle. 
 
 ## What this isn't
 
-Not an IDE plugin or a hosted product. This is a different posture. Squad Code's job is vetting models (local and frontier) against the same agent loop, run from a terminal. This is NOT a managed service. There is no cloud, no telemetry, no error reporting, no analytics. Not yet OpenAI/Anthropic-ready... But soon, those adapters land in v1.x; today the proven backend is DeepSeek with Ollama as the local option. Not MCP, not hooks, not plugins, not an IDE bridge; those are on the deferred wall, not the roadmap.
+Not an IDE plugin or a hosted product. This is a different beast. Squad Code's job is vetting models (local and frontier) against the same agent loop, run from a terminal. This is NOT a managed service. There is no cloud, no telemetry, no error reporting, no analytics. It is not yet OpenAI/Anthropic-ready... But soon. Those adapters land in v1.x; today the proven backend is DeepSeek with Ollama as the local option. Not MCP, not hooks, not plugins, not an IDE bridge; those are on the deferred wall, not the roadmap.
 
 ## Roadmap
 
@@ -106,4 +113,4 @@ Not an IDE plugin or a hosted product. This is a different posture. Squad Code's
 
 ## Contributing
 
-Personal project. If something's broken, open an issue with a repro. PRs welcome but small and focused — anything bigger than a fix or a single-file feature, please open an issue first so we can talk about whether it fits.
+Personal project. If something's broken, open an issue with a repro and I'll try to get it addressed. PRs welcome but small and focused, anything bigger than a fix or a single-file feature, please open an issue first so we can talk about whether it fits.
