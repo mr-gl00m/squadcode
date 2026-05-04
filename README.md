@@ -1,16 +1,9 @@
-```
-   ███████╗ ██████╗ ██╗   ██╗ █████╗ ██████╗      ██████╗ ██████╗ ██████╗ ███████╗
-   ██╔════╝██╔═══██╗██║   ██║██╔══██╗██╔══██╗    ██╔════╝██╔═══██╗██╔══██╗██╔════╝
-   ███████╗██║   ██║██║   ██║███████║██║  ██║    ██║     ██║   ██║██║  ██║█████╗    
-   ╚════██║██║▄▄ ██║██║   ██║██╔══██║██║  ██║    ██║     ██║   ██║██║  ██║██╔══╝      
-   ███████║╚██████╔╝╚██████╔╝██║  ██║██████╔╝    ╚██████╗╚██████╔╝██████╔╝███████╗  
-   ╚══════╝ ╚══▀▀═╝  ╚═════╝ ╚═╝  ╚═╝╚═════╝      ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝  
-   --------------------------------------------------------------------------------
-```
-I needed a better way to use LLM APIs and local models for coding and whatnot in my day to day. Codex is slow and feels like a mess. So I made this. This is a local CLI agent that streams from any provider through one canonical event loop.
+# Squad Code
+
+A local-first CLI agent that streams from any provider through one canonical event loop.
 
 ```text
-$ squadcode -p "summarize src/"
+$ squad -p "summarize src/"
 [Glob] src/**/*.ts
 [Read] src/engine/loop.ts
 [Read] src/providers/types.ts
@@ -22,8 +15,8 @@ provider until no more tool calls land or max_turns hits.
 ```
 
 ```text
-$ squadcode
-squadcode · deepseek · deepseek-v4-flash · 0 turns · 0 tokens
+$ squad
+squad · deepseek · deepseek-v4-flash · 0 turns · 0 tokens
 > /model deepseek-v4-pro
 model switched to deepseek-v4-pro
 > review the audit chain code for replay attacks
@@ -32,11 +25,11 @@ model switched to deepseek-v4-pro
 
 ## What it is
 
-Squad Code is the modern streaming-agent CLI shape: streaming chat, tool use, sessions, ask/allow/deny permissions, JSONL transcripts; wired to any frontier model behind one `LLMProvider` interface. Every provider stream gets normalized into a single `CanonicalEvent` union (`text_delta`, `tool_call_done`, `tool_result`, `usage`, `done`, `error`); the agent loop never sees provider-specific wire formats. MVP backend is DeepSeek; Ollama works for local inference today; OpenAI and Anthropic adapters are post-MVP. It exists because vetting local models against real tool-use loops needs a harness that doesn't smuggle in provider-specific assumptions, and the existing options either tie themselves to one vendor or skip the agent loop entirely. I intend on adding additional model options and features in the future. 
+Squad Code is the modern streaming-agent CLI shape — streaming chat, tool use, sessions, ask/allow/deny permissions, JSONL transcripts — wired to any frontier model behind one `LLMProvider` interface. Every provider stream gets normalized into a single `CanonicalEvent` union (`text_delta`, `tool_call_done`, `tool_result`, `usage`, `done`, `error`); the agent loop never sees provider-specific wire formats. MVP backend is DeepSeek; Ollama works for local inference today; OpenAI and Anthropic adapters are post-MVP. It exists because vetting local models against real tool-use loops needs a harness that doesn't smuggle in provider-specific assumptions, and the existing options either tie themselves to one vendor or skip the agent loop entirely.
 
 ## Quickstart
 
-Requires Node 22+ and running local Ollama (or a Deepseek API key).
+Requires Node 22+ and a DeepSeek API key (or a running local Ollama).
 
 ```bash
 git clone <this repo>
@@ -73,13 +66,13 @@ Persistence is two structures with two jobs. JSONL transcripts under `~/.squad/s
 
 ```bash
 # scope tools per-session
-squadcode --allowed-tools Read,Grep,Glob -p "find duplicated regex patterns in src/"
+squad --allowed-tools Read,Grep,Glob -p "find duplicated regex patterns in src/"
 
 # bypass the prompt for a one-off automation run
-squadcode --dangerously-skip-permissions -p "rewrite README.md to fix typos"
+squad --dangerously-skip-permissions -p "rewrite README.md to fix typos"
 
 # resume by id
-squadcode --resume 4f9c1a2e-1b3d-4a8c-9f1e-2b3c4d5e6f7a
+squad --resume 4f9c1a2e-1b3d-4a8c-9f1e-2b3c4d5e6f7a
 
 # in the REPL
 > /provider ollama
@@ -92,35 +85,24 @@ squadcode --resume 4f9c1a2e-1b3d-4a8c-9f1e-2b3c4d5e6f7a
 
 ## Status
 
-**v1.0.0** — MVP shipped. The five MVP commands (`squadcode`, `squadcode -p ...`, `squadcode --model ... -p ...`, `squadcode --resume`) stream end-to-end against real DeepSeek calls with the tool loop, permission prompts, and JSONL transcripts working. Ollama provider works for local inference. The Ink REPL ships alongside a `--simple` readline fallback. Used daily by the author to vet local models against real tool-use loops.
+**v1.0.0** — MVP shipped. The five MVP commands (`squad`, `squad -p ...`, `squad --model ... -p ...`, `squad --resume`) stream end-to-end against real DeepSeek calls with the tool loop, permission prompts, and JSONL transcripts working. Ollama provider works for local inference. The Ink REPL ships alongside a `--simple` readline fallback. Used daily by the author to vet local models against real tool-use loops.
 
 OpenAI and Anthropic adapters are post-MVP; both are pending in the v1.x cycle. Single-user, single-machine, no remote sessions.
 
 ## What this isn't
 
-Not an IDE plugin or a hosted product. This is a different beast. Squad Code's job is vetting models (local and frontier) against the same agent loop, run from a terminal. This is NOT a managed service. There is no cloud, no telemetry, no error reporting, no analytics. It is not yet OpenAI/Anthropic-ready... But soon. Those adapters land in v1.x; today the proven backend is DeepSeek with Ollama as the local option. Not MCP, not hooks, not plugins, not an IDE bridge; those are on the deferred wall, not the roadmap.
+Not an IDE plugin or a hosted product — different posture. Squad Code's job is vetting models (local and frontier) against the same agent loop, run from a terminal. Not a managed service — there is no cloud, no telemetry, no error reporting, no analytics. Not yet OpenAI/Anthropic-ready — those adapters land in v1.x; today the proven backend is DeepSeek with Ollama as the local option. Not MCP, not hooks, not plugins, not an IDE bridge — those are on the deferred wall, not the roadmap.
 
 ## Roadmap
 
 - v1.1: OpenAI Responses API adapter, Anthropic Messages API adapter, subagent layer (`Agent` tool, depth=1, four concurrent slots, per-agent model selection).
 - Polish: markdown rendering in the REPL, syntax highlighting, per-provider cost accounting, `--output-format json` and `--output-format stream-json`.
 - Indefinitely deferred: MCP servers, custom agents-as-config, hooks, plugins, IDE bridge, remote sessions, auto-compaction beyond `/compact`.
-- Compatibility with other tools/projects created by me.
 
 ## License
-[MIT](./LICENSE). Copyright © 2026 Nathan Seals / Nexus Labs
 
-## Support Me
-If you find this useful, consider supporting me and my research:
-
-[![Ko-fi](https://img.shields.io/badge/Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/mr_gl00m)
-[![GitHub Sponsors](https://img.shields.io/badge/GitHub_Sponsors-EA4AAA?style=for-the-badge&logo=github&logoColor=white)](https://ko-fi.com/mr_gl00m)
-
-**Crypto:**
-- BTC: `bc1qnedeq3dr2dmlwgmw2mr5mtpxh45uhl395prr0d`
-- ETH: `0x1bCbBa9854dA4Fc1Cb95997D5f42006055282e3c`
-- SOL: `3Wm8wS93UpG2CrZsMWHSspJh7M5gQ6NXBbgLHDFXmAdQ`
+[MIT](./LICENSE). Copyright © 2026 Cid.
 
 ## Contributing
 
-Personal project. If something's broken, open an issue with a repro and I'll try to get it addressed. PRs welcome but small and focused, anything bigger than a fix or a single-file feature, please open an issue first so we can talk about whether it fits.
+Personal project. If something's broken, open an issue with a repro. PRs welcome but small and focused — anything bigger than a fix or a single-file feature, please open an issue first so we can talk about whether it fits.
