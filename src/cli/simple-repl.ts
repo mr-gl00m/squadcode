@@ -1,10 +1,11 @@
 import { createInterface } from "node:readline";
 import { runAgentLoop } from "../engine/loop.js";
+import type { HookRunner } from "../hooks/runner.js";
 import { logger } from "../logger.js";
-import type { PolicyConfig } from "../permissions/policy.js";
+import type { PolicyConfig, RuleMap } from "../permissions/policy.js";
 import {
-  loadProjectAllow,
-  persistProjectAllow,
+  loadProjectRules,
+  persistProjectRule,
 } from "../permissions/project.js";
 import {
   promptForPermission,
@@ -17,16 +18,26 @@ import type {
   CanonicalToolCall,
   LLMProvider,
 } from "../providers/types.js";
+import { makeOffloadLargeOutput } from "../sessions/artifacts.js";
 import type { SessionStore } from "../sessions/store.js";
 import type { SessionMetadata } from "../sessions/types.js";
 import { updateDefaultSelection } from "../settings.js";
 import { sanitizeForTerminal } from "../terminal.js";
+import { calculateCost, lookupPricing } from "../pricing.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import { findChecklist, checklistMissingMessage } from "../yolo/checklist.js";
+import {
+  createYoloSession,
+  yoloSystemPromptAddendum,
+  type YoloSession,
+} from "../yolo/index.js";
 import { BANNER, bannerSubtitle } from "./banner.js";
 import { createPrintState, renderEvent } from "./print.js";
 import { handleSlash, type SlashContext } from "./slash.js";
+import { formatUsageReport } from "./usage-format.js";
+import { parseUsageArgs } from "./repl.js";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 
 export interface SimpleReplOptions {
   provider: LLMProvider;
@@ -36,6 +47,7 @@ export interface SimpleReplOptions {
   policy: PolicyConfig;
   cwd: string;
   systemPrompt: string;
+  baseSystemPrompt: string;
   buildProvider: (name: string) => LLMProvider | string;
   store: SessionStore;
   sessionId: string;
@@ -43,19 +55,25 @@ export interface SimpleReplOptions {
   messages: CanonicalMessage[];
   resumed: boolean;
   allowProjectPersist: boolean;
+  hookRunner: HookRunner;
+  yolo: YoloSession | null;
 }
 
 export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
   const messages: CanonicalMessage[] = [...opts.messages];
-  const sessionAllow = new Set<string>();
-  const projectAllow = opts.allowProjectPersist
-    ? await loadProjectAllow(opts.cwd)
-    : new Set<string>();
+  const sessionRules: RuleMap = new Map();
+  const projectRules: RuleMap = opts.allowProjectPersist
+    ? await loadProjectRules(opts.cwd)
+    : new Map();
   let provider = opts.provider;
   let providerName = sanitizeForTerminal(opts.providerName);
   let model = sanitizeForTerminal(opts.model);
   let turnCount = opts.metadata.turnCount;
   let totalTokens = opts.metadata.totalTokens;
+  let yolo: YoloSession | null = opts.yolo;
+  let systemPrompt = opts.systemPrompt;
+  let policy = opts.policy;
+  const basePolicy = { ...opts.policy, dangerouslySkipPermissions: false };
 
   const rl = createInterface({
     input: process.stdin,
@@ -90,6 +108,10 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
     },
     messageCount: () => messages.length,
     skills: () => new Map(),
+    outputStyles: () => new Map(),
+    activeStyleName: () => null,
+    setStyle: () => "output styles are only available in the interactive REPL",
+    clearStyle: () => undefined,
     costSummary: () => {
       const lines = [
         `provider/model:  ${providerName}/${model}`,
@@ -98,6 +120,36 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
         `cost:            (not tracked in fallback REPL)`,
       ];
       return lines.join("\n");
+    },
+    usageReport: (arg: string) => {
+      const parsed = parseUsageArgs(arg);
+      const filter: { sessionId?: string; cwd?: string; sinceIso?: string } = {};
+      let scopeLabel: string;
+      if (parsed.scope === "session") {
+        filter.sessionId = opts.sessionId;
+        scopeLabel = `current session (${opts.sessionId.slice(0, 8)})`;
+      } else if (parsed.scope === "all") {
+        scopeLabel = "all sessions";
+      } else {
+        filter.cwd = opts.cwd;
+        scopeLabel = `cwd ${opts.cwd}`;
+      }
+      if (parsed.daysBack !== undefined) {
+        const since = new Date(Date.now() - parsed.daysBack * 86_400_000);
+        filter.sinceIso = since.toISOString();
+        scopeLabel += `, last ${parsed.daysBack} day${parsed.daysBack === 1 ? "" : "s"}`;
+      }
+      const totals = opts.store.usageTotals(filter);
+      const byDay = opts.store.usageByDay(filter, parsed.daysBack ?? 14);
+      const byModel = opts.store.usageByModel(filter);
+      const bySession = opts.store.usageBySession(filter, 10);
+      return formatUsageReport(
+        { totals, byDay, byModel, bySession },
+        {
+          scopeLabel,
+          ...(parsed.daysBack !== undefined && { daysBack: parsed.daysBack }),
+        },
+      );
     },
     toolList: () => {
       const tools = opts.registry.list();
@@ -122,7 +174,30 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
     },
     clear: () => {
       messages.length = 0;
-      sessionAllow.clear();
+      sessionRules.clear();
+    },
+    yoloStatus: () => {
+      if (yolo) {
+        return `YOLO is ON. Sandbox=${opts.cwd}. Archive=${yolo.archiveDir}. Checklist=${yolo.checklistPath ?? "(none)"}.`;
+      }
+      return "YOLO is OFF.";
+    },
+    toggleYolo: async () => {
+      if (yolo) {
+        yolo = null;
+        systemPrompt = opts.baseSystemPrompt;
+        policy = basePolicy;
+        return "YOLO disarmed. Permission prompts are back on.";
+      }
+      const checklist = await findChecklist(opts.cwd);
+      if (!checklist) {
+        return checklistMissingMessage();
+      }
+      yolo = createYoloSession({ cwd: opts.cwd, checklistPath: checklist.path });
+      const addendum = `${yoloSystemPromptAddendum(yolo)}\n\n## Loaded checklist (${checklist.path})\n${checklist.contents}`;
+      systemPrompt = `${opts.baseSystemPrompt}\n\n${addendum}`;
+      policy = { ...basePolicy, dangerouslySkipPermissions: true };
+      return `YOLO armed. Sandbox=${opts.cwd}. Archive=${yolo.archiveDir}. Checklist=${checklist.path}.`;
     },
   };
 
@@ -145,7 +220,7 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
     });
     if (outcome === "always-project" && opts.allowProjectPersist) {
       try {
-        await persistProjectAllow(opts.cwd, req.toolName);
+        await persistProjectRule(opts.cwd, req.toolName, req.scopePattern, "allow");
       } catch (err) {
         logger.warn(
           { err: err instanceof Error ? err.message : String(err) },
@@ -172,6 +247,10 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
       if (result.followup?.kind === "skill") {
         process.stdout.write("(skills not supported in fallback REPL)\n");
       }
+      if (result.followup?.kind === "yolo-toggle" && slashCtx.toggleYolo) {
+        const msg = await slashCtx.toggleYolo();
+        process.stdout.write(`${sanitizeForTerminal(msg)}\n`);
+      }
       if (result.exit) break;
       writePrompt();
       continue;
@@ -179,6 +258,19 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
 
     messages.push({ role: "user", content: line });
     await opts.store.appendUserMessage(opts.sessionId, line);
+    try {
+      await opts.hookRunner.fire({
+        event: "UserPromptSubmit",
+        sessionId: opts.sessionId,
+        cwd: opts.cwd,
+        prompt: line,
+      });
+    } catch (err: unknown) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "UserPromptSubmit hook fire failed",
+      );
+    }
 
     const abort = new AbortController();
     const onSigint = (): void => {
@@ -193,23 +285,54 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
       pendingToolCalls: [] as CanonicalToolCall[],
       turnTokens: 0,
     };
+    let turnToolCalls = 0;
 
     const state = createPrintState();
     try {
       for await (const ev of runAgentLoop({
         provider,
         model,
-        systemPrompt: opts.systemPrompt,
+        systemPrompt,
         messages,
         registry: opts.registry,
-        policy: opts.policy,
+        policy,
         cwd: opts.cwd,
         abort: abort.signal,
-        sessionAllow,
-        projectAllow,
+        sessionRules,
+        projectRules,
         askPermission,
+        offloadLargeOutput: makeOffloadLargeOutput({ sessionId: opts.sessionId }),
+        hookRunner: opts.hookRunner,
+        sessionId: opts.sessionId,
+        ...(yolo && { yolo }),
       })) {
-        if (ev.type === "usage") totalTokens += ev.usage.totalTokens;
+        if (ev.type === "usage") {
+          totalTokens += ev.usage.totalTokens;
+          const pricing = lookupPricing(providerName, model);
+          const cost = pricing
+            ? calculateCost(
+                pricing,
+                ev.usage.inputTokens,
+                ev.usage.outputTokens,
+                ev.usage.cachedInputTokens,
+              )
+            : 0;
+          opts.store.recordUsage({
+            ts: new Date().toISOString(),
+            sessionId: opts.sessionId,
+            cwd: opts.cwd,
+            provider: providerName,
+            model,
+            inputTokens: ev.usage.inputTokens,
+            cachedInputTokens: ev.usage.cachedInputTokens ?? 0,
+            outputTokens: ev.usage.outputTokens,
+            totalTokens: ev.usage.totalTokens,
+            costUsd: cost,
+            toolCalls: turnToolCalls,
+            source: "turn",
+          });
+        }
+        if (ev.type === "tool_call_done") turnToolCalls += 1;
         renderEvent(ev, state);
         await persistEventToStore(opts.store, opts.sessionId, ev, buffers);
       }
@@ -299,6 +422,7 @@ async function persistEventToStore(
         content: ev.content,
         contentTruncated: false,
         ...(ev.error !== undefined && { error: ev.error }),
+        ...(ev.artifact && { artifact: ev.artifact }),
       });
       return;
     }

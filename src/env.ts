@@ -29,13 +29,12 @@ const envSchema = z.object({
     .enum(["fatal", "error", "warn", "info", "debug", "trace"])
     .default("info"),
 
-  AI_DEFAULT_PROVIDER: z
-    .enum(["deepseek", "openai", "anthropic", "ollama"])
-    .default("deepseek"),
+  AI_DEFAULT_PROVIDER: z.string().default("deepseek"),
   AI_DEFAULT_MODEL: emptyToUndefined,
 
   ANTHROPIC_API_KEY: emptyToUndefined,
   ANTHROPIC_BASE_URL: emptyToUndefinedUrl,
+  ANTHROPIC_MODEL: z.string().default("claude-sonnet-4-6"),
 
   OPENAI_API_KEY: emptyToUndefined,
   OPENAI_BASE_URL: z.string().url().default("https://api.openai.com/v1"),

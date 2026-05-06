@@ -1,5 +1,12 @@
 import { logger } from "../logger.js";
-import { decideAction, type PolicyConfig } from "../permissions/policy.js";
+import { deriveScopePattern } from "../permissions/match.js";
+import {
+  appendRule,
+  decideAction,
+  mergeRules,
+  type PolicyConfig,
+  type RuleMap,
+} from "../permissions/policy.js";
 import {
   promptForPermission,
   type PromptOutcome,
@@ -12,11 +19,20 @@ import type {
   CanonicalToolCall,
   LLMProvider,
 } from "../providers/types.js";
+import type { HookRunner } from "../hooks/runner.js";
+import type { ArtifactRef } from "../sessions/types.js";
 import type { ToolRegistry } from "../tools/registry.js";
-import type { ToolResult } from "../tools/types.js";
+import type { PreviewResult, ToolResult } from "../tools/types.js";
+import type { YoloSession } from "../yolo/index.js";
 import { runTurn } from "./stream.js";
 
 export type AskPermissionFn = (req: PromptRequest) => Promise<PromptOutcome>;
+
+export type OffloadLargeOutputFn = (args: {
+  callId: string;
+  toolName: string;
+  content: string;
+}) => Promise<{ content: string; artifact: ArtifactRef } | null>;
 
 export interface AgentLoopOptions {
   provider: LLMProvider;
@@ -28,28 +44,34 @@ export interface AgentLoopOptions {
   cwd: string;
   abort: AbortSignal;
   maxTurns?: number;
-  sessionAllow?: Set<string>;
-  projectAllow?: Set<string>;
+  sessionRules?: RuleMap;
+  projectRules?: RuleMap;
   askPermission?: AskPermissionFn;
+  offloadLargeOutput?: OffloadLargeOutputFn;
+  hookRunner?: HookRunner;
+  sessionId?: string;
+  yolo?: YoloSession;
 }
 
 const DEFAULT_MAX_TURNS = 25;
 
-// Diminishing-returns guard. If the model produces fewer than this many chars
-// of assistant content (text + reasoning) for LOW_PROGRESS_STREAK consecutive
-// turns while still emitting tool calls, the loop is thrashing — bail out
-// rather than burn the rest of maxTurns on a model that's not making progress.
-const LOW_PROGRESS_CHARS = 500;
-const LOW_PROGRESS_STREAK = 3;
+// Repeated-call guard. If the same tool call (name + canonicalized args) shows
+// up on this many consecutive turns *with no fresh tool calls mixed in*, the
+// model is genuinely thrashing on the same operation — bail out rather than
+// burn the rest of maxTurns. A turn that introduces a signature we haven't
+// seen before is progress and resets all streaks; this lets local models do
+// "explore → re-glob → read more → re-glob" without false-positive aborts,
+// while still catching "same call emitted turn after turn" with nothing else.
+const REPEATED_CALL_STREAK = 3;
 
 export async function* runAgentLoop(
   opts: AgentLoopOptions,
 ): AsyncIterable<CanonicalEvent> {
   const messages = opts.messages;
-  const sessionAllow = opts.sessionAllow ?? new Set<string>();
-  const projectAllow = opts.projectAllow ?? new Set<string>();
+  const sessionRules: RuleMap = opts.sessionRules ?? new Map();
+  const projectRules: RuleMap = opts.projectRules ?? new Map();
   const maxTurns = opts.maxTurns ?? DEFAULT_MAX_TURNS;
-  let lowProgressStreak = 0;
+  const callStreaks = new Map<string, number>();
 
   for (let turn = 0; turn < maxTurns; turn += 1) {
     if (opts.abort.aborted) return;
@@ -90,37 +112,126 @@ export async function* runAgentLoop(
       return;
     }
 
-    const turnChars = assistantText.length + assistantReasoning.length;
-    if (turnChars < LOW_PROGRESS_CHARS) {
-      lowProgressStreak += 1;
-      if (lowProgressStreak >= LOW_PROGRESS_STREAK) {
-        logger.warn(
-          { turn, lowProgressStreak, turnChars },
-          "agent loop diminishing returns",
-        );
-        yield {
-          type: "error",
-          code: "DIMINISHING_RETURNS",
-          message: `aborted after ${LOW_PROGRESS_STREAK} consecutive low-progress turns (<${LOW_PROGRESS_CHARS} chars each); model appears stuck`,
-          retryable: false,
-        };
-        return;
+    const turnSigs = new Set<string>();
+    for (const call of pendingCalls) turnSigs.add(callSignature(call));
+    let hasFreshSig = false;
+    for (const sig of turnSigs) {
+      if (!callStreaks.has(sig)) {
+        hasFreshSig = true;
+        break;
       }
+    }
+    let thrashSig: string | null = null;
+    let thrashStreak = 0;
+    if (hasFreshSig) {
+      callStreaks.clear();
+      for (const sig of turnSigs) callStreaks.set(sig, 1);
     } else {
-      lowProgressStreak = 0;
+      for (const sig of turnSigs) {
+        const next = (callStreaks.get(sig) ?? 0) + 1;
+        callStreaks.set(sig, next);
+        if (next > thrashStreak) {
+          thrashStreak = next;
+          thrashSig = sig;
+        }
+      }
+      for (const sig of [...callStreaks.keys()]) {
+        if (!turnSigs.has(sig)) callStreaks.delete(sig);
+      }
+    }
+    if (thrashStreak >= REPEATED_CALL_STREAK) {
+      logger.warn(
+        { turn, streak: thrashStreak, signature: thrashSig },
+        "agent loop repeated tool call",
+      );
+      // Conversation invariant: every assistant message with tool_calls must
+      // be followed by tool messages on each tool_call_id. We pushed the
+      // assistant message above; if we return now without running these
+      // calls, the next provider request from the REPL ("Continue ...")
+      // fails with the OpenAI-style alignment error. Stub them out.
+      satisfyUnfulfilledCalls(messages, pendingCalls, "REPEATED_TOOL_CALLS");
+      yield {
+        type: "error",
+        code: "REPEATED_TOOL_CALLS",
+        message: `aborted: same tool call emitted on ${thrashStreak} consecutive turns; model appears stuck`,
+        retryable: false,
+      };
+      return;
     }
 
-    for (const call of pendingCalls) {
-      if (opts.abort.aborted) return;
+    let callIndex = 0;
+    for (; callIndex < pendingCalls.length; callIndex += 1) {
+      if (opts.abort.aborted) break;
+      const call = pendingCalls[callIndex]!;
+      if (opts.hookRunner && opts.sessionId) {
+        try {
+          await opts.hookRunner.fire({
+            event: "PreToolUse",
+            sessionId: opts.sessionId,
+            cwd: opts.cwd,
+            toolName: call.name,
+            args: call.args,
+            callId: call.id,
+          });
+        } catch (err: unknown) {
+          logger.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            "PreToolUse hook fire failed",
+          );
+        }
+      }
       const { result, reason } = await runOneToolCall(
         call,
         opts,
-        sessionAllow,
-        projectAllow,
+        sessionRules,
+        projectRules,
       );
+      if (opts.hookRunner && opts.sessionId) {
+        try {
+          await opts.hookRunner.fire({
+            event: result.ok ? "PostToolUse" : "PostToolUseFailure",
+            sessionId: opts.sessionId,
+            cwd: opts.cwd,
+            toolName: call.name,
+            args: call.args,
+            callId: call.id,
+            ok: result.ok,
+            ...(result.error !== undefined && { error: result.error }),
+          });
+        } catch (err: unknown) {
+          logger.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            "PostToolUse hook fire failed",
+          );
+        }
+      }
+      let bodyContent = result.content;
+      let artifact: ArtifactRef | undefined;
+      if (opts.offloadLargeOutput && result.ok) {
+        try {
+          const off = await opts.offloadLargeOutput({
+            callId: call.id,
+            toolName: call.name,
+            content: result.content,
+          });
+          if (off) {
+            bodyContent = off.content;
+            artifact = off.artifact;
+          }
+        } catch (err: unknown) {
+          logger.warn(
+            {
+              tool: call.name,
+              callId: call.id,
+              err: err instanceof Error ? err.message : String(err),
+            },
+            "offload large output hook failed; using inline content",
+          );
+        }
+      }
       const attrs: { ok: boolean; error?: string } = { ok: result.ok };
       if (result.error !== undefined) attrs.error = result.error;
-      const wrappedContent = wrapToolOutput(call.name, result.content, attrs);
+      const wrappedContent = wrapToolOutput(call.name, bodyContent, attrs);
       messages.push({
         role: "tool",
         content: wrappedContent,
@@ -136,7 +247,18 @@ export async function* runAgentLoop(
         content: wrappedContent,
       };
       if (result.error !== undefined) resultEvent.error = result.error;
+      if (artifact) resultEvent.artifact = artifact;
       yield resultEvent;
+    }
+    if (callIndex < pendingCalls.length) {
+      // Aborted mid-tool-execution. Same invariant as above — fill in the
+      // remaining unsatisfied calls so the next request stays valid.
+      satisfyUnfulfilledCalls(
+        messages,
+        pendingCalls.slice(callIndex),
+        "ABORTED",
+      );
+      return;
     }
   }
 
@@ -154,8 +276,8 @@ type ToolResultReason = "denied" | "executed" | "unknown_tool" | "aborted";
 async function runOneToolCall(
   call: CanonicalToolCall,
   opts: AgentLoopOptions,
-  sessionAllow: Set<string>,
-  projectAllow: Set<string>,
+  sessionRules: RuleMap,
+  projectRules: RuleMap,
 ): Promise<{ result: ToolResult; reason: ToolResultReason }> {
   const tool = opts.registry.get(call.name);
   if (!tool) {
@@ -169,27 +291,60 @@ async function runOneToolCall(
     };
   }
 
-  const action = sessionAllow.has(tool.name) || projectAllow.has(tool.name)
-    ? "allow"
-    : decideAction(tool.name, tool.defaultPermission, opts.policy);
+  const effectivePolicy: PolicyConfig = {
+    ...opts.policy,
+    rules: mergeRules(sessionRules, projectRules, opts.policy.rules),
+  };
+  const action = decideAction(
+    tool.name,
+    tool.defaultPermission,
+    call.args,
+    effectivePolicy,
+  );
+  const scopePattern = deriveScopePattern(tool.name, call.args);
 
   let allowed: boolean;
+  let executeMetadata: unknown = undefined;
   if (action === "deny") {
     allowed = false;
   } else if (action === "allow") {
     allowed = true;
   } else {
+    let preview: PreviewResult | null = null;
+    if (tool.preview) {
+      try {
+        preview = await tool.preview(call.args, {
+          cwd: opts.cwd,
+          signal: opts.abort,
+          callId: call.id,
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn(
+          { tool: tool.name, callId: call.id, err: msg },
+          "tool preview failed; falling back to JSON args",
+        );
+      }
+    }
     const askFn = opts.askPermission ?? promptForPermission;
     const outcome = await askFn({
       toolName: tool.name,
       callId: call.id,
-      argsPreview: previewArgs(call.args),
+      argsPreview: preview?.display ?? previewArgs(call.args),
+      scopePattern,
     });
+    if (preview) executeMetadata = preview.metadata;
     if (outcome === "always-allow") {
-      sessionAllow.add(tool.name);
+      appendRule(sessionRules, tool.name, {
+        pattern: scopePattern,
+        action: "allow",
+      });
       allowed = true;
     } else if (outcome === "always-project") {
-      projectAllow.add(tool.name);
+      appendRule(projectRules, tool.name, {
+        pattern: scopePattern,
+        action: "allow",
+      });
       allowed = true;
     } else {
       allowed = outcome === "allow";
@@ -212,11 +367,16 @@ async function runOneToolCall(
   }
 
   try {
-    const result = await tool.execute(call.args, {
-      cwd: opts.cwd,
-      signal: opts.abort,
-      callId: call.id,
-    });
+    const result = await tool.execute(
+      call.args,
+      {
+        cwd: opts.cwd,
+        signal: opts.abort,
+        callId: call.id,
+        ...(opts.yolo && { yolo: opts.yolo }),
+      },
+      executeMetadata,
+    );
     return { result, reason: "executed" };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -235,6 +395,41 @@ async function runOneToolCall(
 
 function escapeForMarker(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function satisfyUnfulfilledCalls(
+  messages: CanonicalMessage[],
+  calls: CanonicalToolCall[],
+  errorCode: "REPEATED_TOOL_CALLS" | "ABORTED",
+): void {
+  const body =
+    errorCode === "REPEATED_TOOL_CALLS"
+      ? "tool call not executed: agent loop aborted (repeated identical tool calls)"
+      : "tool call not executed: agent loop aborted";
+  for (const call of calls) {
+    messages.push({
+      role: "tool",
+      content: wrapToolOutput(call.name, body, { ok: false, error: errorCode }),
+      toolCallId: call.id,
+      toolName: call.name,
+    });
+  }
+}
+
+function canonicalStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalStringify).join(",")}]`;
+  }
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return `{${keys
+    .map((k) => `${JSON.stringify(k)}:${canonicalStringify(obj[k])}`)
+    .join(",")}}`;
+}
+
+function callSignature(call: CanonicalToolCall): string {
+  return `${call.name} ${canonicalStringify(call.args)}`;
 }
 
 function wrapToolOutput(

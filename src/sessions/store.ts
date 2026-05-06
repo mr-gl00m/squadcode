@@ -9,6 +9,7 @@ import type {
   CanonicalToolCall,
 } from "../providers/types.js";
 import { SessionsIndex } from "./index.js";
+import { writeAssistantMessageSidecar } from "./message-sidecar.js";
 import { truncateForPersistence } from "./truncate.js";
 import type {
   AssistantMessagePayload,
@@ -21,6 +22,13 @@ import type {
   ToolResultPayload,
   UserMessagePayload,
 } from "./types.js";
+import {
+  UsageLedger,
+  type UsageFilter,
+  type UsageGroupRow,
+  type UsageRecord,
+  type UsageTotals,
+} from "./usage-ledger.js";
 import { SessionWriter, readSessionFile } from "./writer.js";
 
 export const STATE_DIR = join(homedir(), ".squad");
@@ -51,6 +59,21 @@ export interface SessionStore {
     sessionId: string,
     payload: { tool: string; callId: string; outcome: string },
   ): void;
+  recordHookFire(
+    sessionId: string,
+    payload: {
+      id: string;
+      event: string;
+      ok: boolean;
+      status: string;
+      elapsedMs: number;
+    },
+  ): void;
+  recordUsage(record: UsageRecord): void;
+  usageTotals(filter?: UsageFilter): UsageTotals;
+  usageByDay(filter?: UsageFilter, limit?: number): UsageGroupRow[];
+  usageBySession(filter?: UsageFilter, limit?: number): UsageGroupRow[];
+  usageByModel(filter?: UsageFilter): UsageGroupRow[];
   bumpUsage(sessionId: string, turnDelta: number, tokenDelta: number): void;
   list(filter?: ListFilter): SessionMetadata[];
   read(sessionId: string): Promise<{
@@ -71,6 +94,7 @@ class SessionStoreImpl implements SessionStore {
     private readonly db: Database.Database,
     private readonly index: SessionsIndex,
     private readonly audit: AuditChain,
+    private readonly usage: UsageLedger,
   ) {}
 
   private sessionFilePath(sessionId: string): string {
@@ -173,6 +197,11 @@ class SessionStoreImpl implements SessionStore {
       type: "assistant_message",
       payload,
     });
+    await writeAssistantMessageSidecar({
+      baseDir: SESSIONS_DIR,
+      sessionId,
+      content: payload.content,
+    });
   }
 
   async appendToolCall(
@@ -190,11 +219,21 @@ class SessionStoreImpl implements SessionStore {
     sessionId: string,
     payload: ToolResultPayload,
   ): Promise<void> {
-    const truncated = truncateForPersistence(payload.content);
+    // When the engine already offloaded the full content to an artifact, the
+    // payload's `content` is the offload preview — small, complete, and no
+    // longer the truncation target. Don't re-truncate; the sidecar already
+    // captured the full output.
+    let storedContent = payload.content;
+    let storedTruncated = payload.contentTruncated;
+    if (!payload.artifact) {
+      const truncated = truncateForPersistence(payload.content);
+      storedContent = truncated.text;
+      storedTruncated = truncated.truncated;
+    }
     const stored: ToolResultPayload = {
       ...payload,
-      content: truncated.text,
-      contentTruncated: truncated.truncated,
+      content: storedContent,
+      contentTruncated: storedTruncated,
     };
     await this.writeRecord(sessionId, { type: "tool_result", payload: stored });
     this.auditAppend(sessionId, "tool_result", {
@@ -203,6 +242,10 @@ class SessionStoreImpl implements SessionStore {
       ok: payload.ok,
       reason: payload.reason,
       ...(payload.error !== undefined && { error: payload.error }),
+      ...(payload.artifact && {
+        artifactPath: payload.artifact.path,
+        artifactBytes: payload.artifact.fullSizeBytes,
+      }),
     });
   }
 
@@ -213,8 +256,48 @@ class SessionStoreImpl implements SessionStore {
     this.auditAppend(sessionId, "permission_decision", payload);
   }
 
+  recordHookFire(
+    sessionId: string,
+    payload: {
+      id: string;
+      event: string;
+      ok: boolean;
+      status: string;
+      elapsedMs: number;
+    },
+  ): void {
+    this.auditAppend(sessionId, "hook_fire", payload);
+  }
+
   bumpUsage(sessionId: string, turnDelta: number, tokenDelta: number): void {
     this.index.bump({ sessionId, turnDelta, tokenDelta });
+  }
+
+  recordUsage(record: UsageRecord): void {
+    try {
+      this.usage.record(record);
+    } catch (err: unknown) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "usage ledger record failed",
+      );
+    }
+  }
+
+  usageTotals(filter: UsageFilter = {}): UsageTotals {
+    return this.usage.totals(filter);
+  }
+
+  usageByDay(filter: UsageFilter = {}, limit?: number): UsageGroupRow[] {
+    return this.usage.groupByDay(filter, limit);
+  }
+
+  usageBySession(filter: UsageFilter = {}, limit?: number): UsageGroupRow[] {
+    return this.usage.groupBySession(filter, limit);
+  }
+
+  usageByModel(filter: UsageFilter = {}): UsageGroupRow[] {
+    return this.usage.groupByModel(filter);
   }
 
   list(filter: ListFilter = {}): SessionMetadata[] {
@@ -273,7 +356,8 @@ export function openSessionStore(): SessionStore {
   const db = connectDb({ dbPath: DB_PATH });
   const index = new SessionsIndex(db);
   const audit = new AuditChain(db);
-  return new SessionStoreImpl(db, index, audit);
+  const usage = new UsageLedger(db);
+  return new SessionStoreImpl(db, index, audit, usage);
 }
 
 function recordsToMessages(records: SessionRecord[]): CanonicalMessage[] {

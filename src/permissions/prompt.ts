@@ -17,6 +17,7 @@ export interface PromptRequest {
   toolName: string;
   callId: string;
   argsPreview: string;
+  scopePattern: string;
 }
 
 export interface PromptOptions {

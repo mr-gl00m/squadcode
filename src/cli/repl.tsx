@@ -12,12 +12,14 @@ import {
 } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { runAgentLoop } from "../engine/loop.js";
+import type { HookRunner } from "../hooks/runner.js";
 import { logger } from "../logger.js";
 import type { PolicyConfig } from "../permissions/policy.js";
 import {
-  loadProjectAllow,
-  persistProjectAllow,
+  loadProjectRules,
+  persistProjectRule,
 } from "../permissions/project.js";
+import type { RuleMap } from "../permissions/policy.js";
 import type {
   PromptOutcome,
   PromptRequest,
@@ -28,15 +30,28 @@ import type {
   CanonicalToolCall,
   LLMProvider,
 } from "../providers/types.js";
+import { makeOffloadLargeOutput } from "../sessions/artifacts.js";
 import type { SessionStore } from "../sessions/store.js";
 import type { SessionMetadata } from "../sessions/types.js";
 import {
   calculateCost,
   formatCost,
+  lookupContextWindow,
   lookupPricing,
   type ModelPricing,
 } from "../pricing.js";
+import {
+  DEFAULT_TAIL_TURNS,
+  STRUCTURED_SUMMARIZER_PROMPT,
+  findTailStart,
+  shouldAutoCompact,
+} from "../engine/auto-compact.js";
 import { updateDefaultSelection } from "../settings.js";
+import {
+  composeSystemPrompt,
+  loadOutputStyles,
+  type OutputStyle,
+} from "../output-styles.js";
 import {
   formatSkillForLLM,
   loadSkills,
@@ -46,16 +61,29 @@ import {
 import { sanitizeForTerminal } from "../terminal.js";
 import type { TodoItem } from "../tools/todo.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import { findChecklist, checklistMissingMessage } from "../yolo/checklist.js";
+import {
+  createYoloSession,
+  yoloSystemPromptAddendum,
+  type YoloSession,
+} from "../yolo/index.js";
 import { BANNER, bannerSubtitle } from "./banner.js";
 import { handleSlash, type SlashContext } from "./slash.js";
+import { formatUsageReport } from "./usage-format.js";
+import { renderAssistantLine } from "./markdown.js";
+import {
+  BELL,
+  CLEAR_TITLE_SEQUENCE,
+  deriveTabTitle,
+  tabTitleSequence,
+} from "./tab-title.js";
 import { AssistantTextReflow } from "./text-reflow.js";
 
 const ACCENT = "#7aa2f7";
 const SOFT_RED = "#f7768e";
 const TOOL_GRAY = "#7a8294";
-const VERSION = "1.0.0";
-const SUMMARIZER_PROMPT =
-  "You are a conversation summarizer. Output a faithful, compact summary of the prior conversation that preserves every decision, fact, file path, code reference, name, and current task state. Drop only redundant chatter. No preamble or sign-off.";
+const USER_DIM = "#a89984";
+const VERSION = "1.1.0";
 
 export interface ReplOptions {
   provider: LLMProvider;
@@ -65,6 +93,7 @@ export interface ReplOptions {
   policy: PolicyConfig;
   cwd: string;
   systemPrompt: string;
+  baseSystemPrompt: string;
   buildProvider: (name: string) => LLMProvider | string;
   store: SessionStore;
   sessionId: string;
@@ -72,6 +101,8 @@ export interface ReplOptions {
   messages: CanonicalMessage[];
   resumed: boolean;
   allowProjectPersist: boolean;
+  hookRunner: HookRunner;
+  yolo: YoloSession | null;
 }
 
 interface HistoryEntry {
@@ -127,8 +158,18 @@ function App(opts: ReplOptions): React.JSX.Element {
     sessionId,
     metadata,
     allowProjectPersist,
+    hookRunner,
+    yolo: initialYolo,
   } = opts;
   const { exit } = useApp();
+  const yoloRef = useRef<YoloSession | null>(initialYolo);
+  const [yoloOn, setYoloOn] = useState<boolean>(initialYolo !== null);
+  const systemPromptRef = useRef<string>(systemPrompt);
+  const policyRef = useRef<PolicyConfig>(policy);
+  const basePolicyRef = useRef<PolicyConfig>({
+    ...policy,
+    dangerouslySkipPermissions: false,
+  });
   const initialHistory = buildInitialHistory(opts);
   const [history, setHistory] = useState<HistoryEntry[]>(initialHistory);
   const [streamingText, setStreamingText] = useState("");
@@ -154,12 +195,16 @@ function App(opts: ReplOptions): React.JSX.Element {
   const [lastTurnTokens, setLastTurnTokens] = useState(0);
   const [totalCachedTokens, setTotalCachedTokens] = useState(0);
   const [lastTurnCachedTokens, setLastTurnCachedTokens] = useState(0);
+  const [totalInputTokens, setTotalInputTokens] = useState(0);
+  const [totalOutputTokens, setTotalOutputTokens] = useState(0);
+  const [lastTurnInputTokens, setLastTurnInputTokens] = useState(0);
+  const [lastTurnOutputTokens, setLastTurnOutputTokens] = useState(0);
   const [totalCost, setTotalCost] = useState(0);
   const [lastTurnCost, setLastTurnCost] = useState(0);
 
   const messagesRef = useRef<CanonicalMessage[]>([...opts.messages]);
-  const sessionAllowRef = useRef<Set<string>>(new Set());
-  const projectAllowRef = useRef<Set<string>>(new Set());
+  const sessionRulesRef = useRef<RuleMap>(new Map());
+  const projectRulesRef = useRef<RuleMap>(new Map());
   const providerRef = useRef<LLMProvider>(opts.provider);
   const abortRef = useRef<AbortController | null>(null);
   const idRef = useRef(initialHistory.length);
@@ -171,7 +216,10 @@ function App(opts: ReplOptions): React.JSX.Element {
   const forwardDeleteRef = useRef(false);
   const pendingPermissionRef = useRef<unknown>(null);
   const isStreamingRef = useRef(false);
+  const argBytesRef = useRef<{ id: string; bytes: number } | null>(null);
   const skillsRef = useRef<Map<string, SkillEntry>>(new Map());
+  const outputStylesRef = useRef<Map<string, OutputStyle>>(new Map());
+  const [activeStyle, setActiveStyle] = useState<OutputStyle | null>(null);
   const { internal_eventEmitter: stdinEmitter } = useStdin();
   const { stdout } = useStdout();
   const [pendingPermission, setPendingPermission] = useState<{
@@ -232,17 +280,78 @@ function App(opts: ReplOptions): React.JSX.Element {
     },
     messageCount: () => messagesRef.current.length,
     skills: () => skillsRef.current,
+    outputStyles: () => outputStylesRef.current,
+    activeStyleName: () => activeStyle?.name ?? null,
+    setStyle: (name: string) => {
+      const next = outputStylesRef.current.get(name.toLowerCase());
+      if (!next) {
+        return `unknown output style "${name}"; run /output-style to list available`;
+      }
+      setActiveStyle(next);
+      return null;
+    },
+    clearStyle: () => setActiveStyle(null),
+    usageReport: (arg: string) => {
+      const parsed = parseUsageArgs(arg);
+      const filter: { sessionId?: string; cwd?: string; sinceIso?: string } = {};
+      let scopeLabel: string;
+      if (parsed.scope === "session") {
+        filter.sessionId = sessionId;
+        scopeLabel = `current session (${sessionId.slice(0, 8)})`;
+      } else if (parsed.scope === "all") {
+        scopeLabel = "all sessions";
+      } else {
+        filter.cwd = cwd;
+        scopeLabel = `cwd ${cwd}`;
+      }
+      if (parsed.daysBack !== undefined) {
+        const since = new Date(Date.now() - parsed.daysBack * 86_400_000);
+        filter.sinceIso = since.toISOString();
+        scopeLabel += `, last ${parsed.daysBack} day${parsed.daysBack === 1 ? "" : "s"}`;
+      }
+      const totals = store.usageTotals(filter);
+      const byDay = store.usageByDay(filter, parsed.daysBack ?? 14);
+      const byModel = store.usageByModel(filter);
+      const bySession = store.usageBySession(filter, 10);
+      const sessionTotals =
+        parsed.scope === "session"
+          ? undefined
+          : store.usageTotals({ sessionId });
+      return formatUsageReport(
+        { totals, byDay, byModel, bySession },
+        {
+          scopeLabel,
+          ...(parsed.daysBack !== undefined && { daysBack: parsed.daysBack }),
+          ...(sessionTotals !== undefined && { thisSessionTotals: sessionTotals }),
+        },
+      );
+    },
     costSummary: () => {
       const pricing = lookupPricing(providerNameState, modelState);
       const lines: string[] = [];
+      const totalMissTokens = Math.max(0, totalInputTokens - totalCachedTokens);
+      const lastMissTokens = Math.max(
+        0,
+        lastTurnInputTokens - lastTurnCachedTokens,
+      );
+      const totalHitPct = totalInputTokens > 0
+        ? Math.round((totalCachedTokens / totalInputTokens) * 100)
+        : 0;
+      const lastHitPct = lastTurnInputTokens > 0
+        ? Math.round((lastTurnCachedTokens / lastTurnInputTokens) * 100)
+        : 0;
       lines.push(`provider/model:  ${providerNameState}/${modelState}`);
       lines.push(`turns:           ${turnCount}`);
       lines.push(
-        `tokens (total):  ${totalTokens.toLocaleString()}${totalCachedTokens > 0 ? ` (${totalCachedTokens.toLocaleString()} cached)` : ""}`,
+        `input (total):   ${totalInputTokens.toLocaleString()}  (hit ${totalCachedTokens.toLocaleString()} / miss ${totalMissTokens.toLocaleString()}, ${totalHitPct}% cached)`,
       );
+      lines.push(`output (total):  ${totalOutputTokens.toLocaleString()}`);
       lines.push(
-        `tokens (last):   ${lastTurnTokens.toLocaleString()}${lastTurnCachedTokens > 0 ? ` (${lastTurnCachedTokens.toLocaleString()} cached)` : ""}`,
+        `input (last):    ${lastTurnInputTokens.toLocaleString()}  (hit ${lastTurnCachedTokens.toLocaleString()} / miss ${lastMissTokens.toLocaleString()}, ${lastHitPct}% cached)`,
       );
+      lines.push(`output (last):   ${lastTurnOutputTokens.toLocaleString()}`);
+      lines.push(`tokens (total):  ${totalTokens.toLocaleString()}`);
+      lines.push(`tokens (last):   ${lastTurnTokens.toLocaleString()}`);
       if (pricing) {
         lines.push(`cost (total):    ${formatCost(totalCost)}`);
         lines.push(`cost (last):     ${formatCost(lastTurnCost)}`);
@@ -274,7 +383,7 @@ function App(opts: ReplOptions): React.JSX.Element {
     },
     clear: () => {
       messagesRef.current.length = 0;
-      sessionAllowRef.current.clear();
+      sessionRulesRef.current.clear();
       idRef.current = 1;
       setHistory([
         {
@@ -286,6 +395,34 @@ function App(opts: ReplOptions): React.JSX.Element {
       ]);
       stdout?.write("\x1b[2J\x1b[3J\x1b[H");
       setResizeNonce((n) => n + 1);
+    },
+    yoloStatus: () => {
+      const y = yoloRef.current;
+      if (y) {
+        return `YOLO is ON. Sandbox=${cwd}. Archive=${y.archiveDir}. Checklist=${y.checklistPath ?? "(none)"}.`;
+      }
+      return "YOLO is OFF.";
+    },
+    toggleYolo: async () => {
+      if (yoloRef.current) {
+        yoloRef.current = null;
+        systemPromptRef.current = opts.baseSystemPrompt;
+        policyRef.current = basePolicyRef.current;
+        setYoloOn(false);
+        return "YOLO disarmed. Permission prompts are back on.";
+      }
+      const checklist = await findChecklist(cwd);
+      if (!checklist) return checklistMissingMessage();
+      const next = createYoloSession({ cwd, checklistPath: checklist.path });
+      const addendum = `${yoloSystemPromptAddendum(next)}\n\n## Loaded checklist (${checklist.path})\n${checklist.contents}`;
+      yoloRef.current = next;
+      systemPromptRef.current = `${opts.baseSystemPrompt}\n\n${addendum}`;
+      policyRef.current = {
+        ...basePolicyRef.current,
+        dangerouslySkipPermissions: true,
+      };
+      setYoloOn(true);
+      return `YOLO armed. Sandbox=${cwd}. Archive=${next.archiveDir}. Checklist=${checklist.path}.`;
     },
   };
 
@@ -368,7 +505,12 @@ function App(opts: ReplOptions): React.JSX.Element {
               outcome,
             });
             if (outcome === "always-project" && allowProjectPersist) {
-              persistProjectAllow(cwd, req.toolName).catch((err: unknown) => {
+              persistProjectRule(
+                cwd,
+                req.toolName,
+                req.scopePattern,
+                "allow",
+              ).catch((err: unknown) => {
                 logger.warn(
                   { err: err instanceof Error ? err.message : String(err) },
                   "failed to persist project permission",
@@ -385,18 +527,28 @@ function App(opts: ReplOptions): React.JSX.Element {
   const runCompact = useCallback(async (): Promise<void> => {
     const before = messagesRef.current.length;
     if (before === 0) return;
+    const tailStart = findTailStart(messagesRef.current, DEFAULT_TAIL_TURNS);
+    const toSummarize = messagesRef.current.slice(0, tailStart);
+    const tail = messagesRef.current.slice(tailStart);
+    if (toSummarize.length === 0) {
+      append(
+        "system",
+        `nothing to compact (only ${tail.length} message${tail.length === 1 ? "" : "s"} in protected tail)`,
+      );
+      return;
+    }
     setIsStreaming(true);
     setActivity({ kind: "thinking", label: "Compacting" });
     try {
       const response = await providerRef.current.complete({
         model: modelState,
-        system: SUMMARIZER_PROMPT,
+        system: STRUCTURED_SUMMARIZER_PROMPT,
         messages: [
-          ...messagesRef.current,
+          ...toSummarize,
           {
             role: "user",
             content:
-              "Summarize the conversation above in one tight paragraph or short bulleted list. Preserve every decision, file path, name, and current state. No preamble.",
+              "Summarize the conversation above using the prescribed structure. Preserve every decision, file path, name, and current state.",
           },
         ],
       });
@@ -404,17 +556,45 @@ function App(opts: ReplOptions): React.JSX.Element {
       messagesRef.current.length = 0;
       messagesRef.current.push({
         role: "assistant",
-        content: `[Compacted summary of ${before} earlier message${before === 1 ? "" : "s"}]\n\n${summary}`,
+        content: `[Compacted summary of ${toSummarize.length} earlier message${toSummarize.length === 1 ? "" : "s"}; ${tail.length} recent message${tail.length === 1 ? "" : "s"} preserved]\n\n${summary}`,
       });
+      messagesRef.current.push(...tail);
       setTotalTokens((t) => t + response.usage.totalTokens);
-      if (response.usage.cachedInputTokens && response.usage.cachedInputTokens > 0) {
-        setTotalCachedTokens(
-          (c) => c + (response.usage.cachedInputTokens ?? 0),
-        );
+      setTotalInputTokens((i) => i + response.usage.inputTokens);
+      setTotalOutputTokens((o) => o + response.usage.outputTokens);
+      const compactCached = response.usage.cachedInputTokens ?? 0;
+      if (compactCached > 0) {
+        setTotalCachedTokens((c) => c + compactCached);
       }
+      const compactPricing = lookupPricing(providerNameState, modelState);
+      let compactCost = 0;
+      if (compactPricing) {
+        compactCost = calculateCost(
+          compactPricing,
+          response.usage.inputTokens,
+          response.usage.outputTokens,
+          response.usage.cachedInputTokens,
+        );
+        setTotalCost((c) => c + compactCost);
+      }
+      store.recordUsage({
+        ts: new Date().toISOString(),
+        sessionId,
+        cwd,
+        provider: providerNameState,
+        model: modelState,
+        inputTokens: response.usage.inputTokens,
+        cachedInputTokens: compactCached,
+        outputTokens: response.usage.outputTokens,
+        totalTokens: response.usage.totalTokens,
+        costUsd: compactCost,
+        toolCalls: 0,
+        slashCommand: "compact",
+        source: "compact",
+      });
       append(
         "system",
-        `compacted ${before} → 1 (cost: ${formatTokenCount(response.usage.totalTokens)} tokens)`,
+        `compacted ${toSummarize.length} → 1 (+ ${tail.length} preserved; cost: ${formatTokenCount(response.usage.totalTokens)} tokens)`,
       );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -438,6 +618,19 @@ function App(opts: ReplOptions): React.JSX.Element {
           "session append (user) failed",
         );
       }
+      try {
+        await hookRunner.fire({
+          event: "UserPromptSubmit",
+          sessionId,
+          cwd,
+          prompt: llmContent,
+        });
+      } catch (err: unknown) {
+        logger.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          "UserPromptSubmit hook fire failed",
+        );
+      }
 
       const abort = new AbortController();
       abortRef.current = abort;
@@ -452,6 +645,9 @@ function App(opts: ReplOptions): React.JSX.Element {
       );
       let turnCost = 0;
       let turnCachedTokens = 0;
+      let turnInputTokens = 0;
+      let turnOutputTokens = 0;
+      let turnToolCalls = 0;
       const buffers = {
         text: "",
         reasoning: "",
@@ -460,19 +656,29 @@ function App(opts: ReplOptions): React.JSX.Element {
       };
 
       const reflow = new AssistantTextReflow();
+      const effectiveSystemPrompt = composeSystemPrompt(
+        activeStyle,
+        systemPromptRef.current,
+      );
       try {
         for await (const ev of runAgentLoop({
           provider: providerRef.current,
           model: modelState,
-          systemPrompt,
+          ...(effectiveSystemPrompt !== undefined && {
+            systemPrompt: effectiveSystemPrompt,
+          }),
           messages: messagesRef.current,
           registry,
-          policy,
+          policy: policyRef.current,
           cwd,
           abort: abort.signal,
-          sessionAllow: sessionAllowRef.current,
-          projectAllow: projectAllowRef.current,
+          sessionRules: sessionRulesRef.current,
+          projectRules: projectRulesRef.current,
           askPermission,
+          offloadLargeOutput: makeOffloadLargeOutput({ sessionId }),
+          hookRunner,
+          sessionId,
+          ...(yoloRef.current && { yolo: yoloRef.current }),
         })) {
           await persistEvent(store, sessionId, ev, buffers);
           switch (ev.type) {
@@ -496,19 +702,32 @@ function App(opts: ReplOptions): React.JSX.Element {
                   : { kind: "thinking", label: "Thinking" },
               );
               break;
-            case "tool_call_delta":
-              setActivity((prev) =>
-                prev.kind === "tool" && prev.label !== `Preparing ${prev.toolName}`
-                  ? { ...prev, label: `Preparing ${prev.toolName}` }
-                  : prev,
-              );
+            case "tool_call_delta": {
+              // Track args-buffer growth so the activity label updates on every
+              // chunk. A frozen counter means the upstream stream is actually
+              // stalled; a climbing counter means the model is just slow on a
+              // large arg payload (Write with big content, etc).
+              const tracked = argBytesRef.current;
+              if (tracked && tracked.id === ev.id) {
+                tracked.bytes += ev.argsDelta.length;
+              } else {
+                argBytesRef.current = { id: ev.id, bytes: ev.argsDelta.length };
+              }
+              const bytes = argBytesRef.current?.bytes ?? 0;
+              setActivity((prev) => {
+                if (prev.kind !== "tool") return prev;
+                const label = `Preparing ${prev.toolName} (${formatBytes(bytes)})`;
+                return prev.label === label ? prev : { ...prev, label };
+              });
               break;
+            }
             case "tool_call_start":
               {
                 const remaining = reflow.flush();
                 if (remaining) appendAssistantBlock(remaining);
                 setStreamingText("");
               }
+              argBytesRef.current = { id: ev.id, bytes: 0 };
               setActivity({
                 kind: "tool",
                 label: `Preparing ${ev.name}`,
@@ -516,6 +735,8 @@ function App(opts: ReplOptions): React.JSX.Element {
               });
               break;
             case "tool_call_done":
+              argBytesRef.current = null;
+              turnToolCalls += 1;
               setActivity({
                 kind: "tool",
                 label: `Running ${ev.name}`,
@@ -541,25 +762,44 @@ function App(opts: ReplOptions): React.JSX.Element {
               setActivity({ kind: "thinking", label: "Thinking" });
               break;
             }
-            case "usage":
+            case "usage": {
               setTotalTokens((t) => t + ev.usage.totalTokens);
-              if (ev.usage.cachedInputTokens && ev.usage.cachedInputTokens > 0) {
-                turnCachedTokens += ev.usage.cachedInputTokens;
-                setTotalCachedTokens(
-                  (c) => c + (ev.usage.cachedInputTokens ?? 0),
-                );
+              turnInputTokens += ev.usage.inputTokens;
+              turnOutputTokens += ev.usage.outputTokens;
+              setTotalInputTokens((i) => i + ev.usage.inputTokens);
+              setTotalOutputTokens((o) => o + ev.usage.outputTokens);
+              const cached = ev.usage.cachedInputTokens ?? 0;
+              if (cached > 0) {
+                turnCachedTokens += cached;
+                setTotalCachedTokens((c) => c + cached);
               }
+              let usageRowCost = 0;
               if (turnPricing) {
-                const inc = calculateCost(
+                usageRowCost = calculateCost(
                   turnPricing,
                   ev.usage.inputTokens,
                   ev.usage.outputTokens,
                   ev.usage.cachedInputTokens,
                 );
-                turnCost += inc;
-                setTotalCost((c) => c + inc);
+                turnCost += usageRowCost;
+                setTotalCost((c) => c + usageRowCost);
               }
+              store.recordUsage({
+                ts: new Date().toISOString(),
+                sessionId,
+                cwd,
+                provider: providerNameState,
+                model: modelState,
+                inputTokens: ev.usage.inputTokens,
+                cachedInputTokens: cached,
+                outputTokens: ev.usage.outputTokens,
+                totalTokens: ev.usage.totalTokens,
+                costUsd: usageRowCost,
+                toolCalls: turnToolCalls,
+                source: "turn",
+              });
               break;
+            }
             case "error":
               append("error", `${ev.code}: ${ev.message}`);
               setActivity({ kind: "idle", label: "" });
@@ -578,7 +818,17 @@ function App(opts: ReplOptions): React.JSX.Element {
         setTurnCount((t) => t + 1);
         setLastTurnTokens(buffers.turnTokens);
         setLastTurnCachedTokens(turnCachedTokens);
+        setLastTurnInputTokens(turnInputTokens);
+        setLastTurnOutputTokens(turnOutputTokens);
         setLastTurnCost(turnCost);
+        const ctxWindow = lookupContextWindow(providerNameState, modelState);
+        if (shouldAutoCompact(turnInputTokens, ctxWindow)) {
+          append(
+            "system",
+            `auto-compact triggered: ${formatTokenCount(turnInputTokens)} of ${formatTokenCount(ctxWindow ?? 0)} context tokens used`,
+          );
+          await runCompact();
+        }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         logger.error({ err: msg }, "repl turn failed");
@@ -603,10 +853,12 @@ function App(opts: ReplOptions): React.JSX.Element {
       append,
       askPermission,
       cwd,
+      hookRunner,
       modelState,
       policy,
       providerNameState,
       registry,
+      runCompact,
       sessionId,
       store,
       systemPrompt,
@@ -669,6 +921,11 @@ function App(opts: ReplOptions): React.JSX.Element {
           const llm = formatSkillForLLM(skill, args);
           const display = `(invoked /${skill.name}${args ? ` ${args}` : ""})`;
           await runUserTurn(llm, display);
+          return;
+        }
+        if (result.followup?.kind === "yolo-toggle" && slashCtx.toggleYolo) {
+          const msg = await slashCtx.toggleYolo();
+          append("system", msg);
           return;
         }
         if (result.exit) {
@@ -830,16 +1087,44 @@ function App(opts: ReplOptions): React.JSX.Element {
   }, [cwd, append]);
 
   useEffect(() => {
-    if (!allowProjectPersist) return;
     let cancelled = false;
-    loadProjectAllow(cwd)
-      .then((set) => {
+    loadOutputStyles(cwd)
+      .then((map) => {
         if (cancelled) return;
-        projectAllowRef.current = set;
-        if (set.size > 0) {
+        outputStylesRef.current = map;
+        if (map.size > 0) {
           append(
             "system",
-            `project permissions loaded: ${[...set].sort().join(", ")} (from .squad/settings.json)`,
+            `loaded ${map.size} output style${map.size === 1 ? "" : "s"} (type /output-style to list)`,
+          );
+        }
+      })
+      .catch((err: unknown) => {
+        logger.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          "output style loading failed",
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, append]);
+
+  useEffect(() => {
+    if (!allowProjectPersist) return;
+    let cancelled = false;
+    loadProjectRules(cwd)
+      .then((map) => {
+        if (cancelled) return;
+        projectRulesRef.current = map;
+        if (map.size > 0) {
+          const total = Array.from(map.values()).reduce(
+            (n, list) => n + list.length,
+            0,
+          );
+          append(
+            "system",
+            `project permissions loaded: ${total} rule${total === 1 ? "" : "s"} across ${map.size} tool${map.size === 1 ? "" : "s"} (from .squad/settings.json)`,
           );
         }
       })
@@ -870,6 +1155,27 @@ function App(opts: ReplOptions): React.JSX.Element {
     stdout.on("resize", onResize);
     return () => {
       stdout.off("resize", onResize);
+    };
+  }, [stdout]);
+
+  const prevPendingPermissionRef = useRef(false);
+  useEffect(() => {
+    if (!stdout) return;
+    const isPending = pendingPermission !== null;
+    const title = deriveTabTitle({
+      pendingPermission: isPending,
+      activityKind: activity.kind,
+    });
+    const justEnteredPending =
+      isPending && !prevPendingPermissionRef.current;
+    prevPendingPermissionRef.current = isPending;
+    stdout.write(tabTitleSequence(title));
+    if (justEnteredPending) stdout.write(BELL);
+  }, [activity.kind, pendingPermission, stdout]);
+
+  useEffect(() => {
+    return () => {
+      if (stdout) stdout.write(CLEAR_TITLE_SEQUENCE);
     };
   }, [stdout]);
 
@@ -991,15 +1297,17 @@ function App(opts: ReplOptions): React.JSX.Element {
       )}
       <Box paddingLeft={1}>
         <Text dimColor>
+          {yoloOn ? <Text color={SOFT_RED} bold>{"YOLO  ·  "}</Text> : null}
           {providerNameState}/{modelState}
           {"  ·  turns "}{turnCount}
-          {lastTurnTokens > 0
-            ? ` (${formatTokenCount(lastTurnTokens)} tokens${lastTurnCachedTokens > 0 ? `, ${formatTokenCount(lastTurnCachedTokens)} cached` : ""}${lastTurnCost > 0 ? `, ~${formatCost(lastTurnCost)}` : ""} last turn)`
+          {lastTurnInputTokens > 0
+            ? ` (last: in ${formatTokenCount(lastTurnInputTokens)}${lastTurnCachedTokens > 0 ? ` [${Math.round((lastTurnCachedTokens / lastTurnInputTokens) * 100)}% cached]` : ""} · out ${formatTokenCount(lastTurnOutputTokens)}${lastTurnCost > 0 ? ` · ~${formatCost(lastTurnCost)}` : ""})`
             : ""}
-          {"  ·  tokens "}{formatTokenCount(totalTokens)}
-          {totalCachedTokens > 0
-            ? ` (${Math.round((totalCachedTokens / Math.max(totalTokens, 1)) * 100)}% cached)`
+          {"  ·  total in "}{formatTokenCount(totalInputTokens)}
+          {totalCachedTokens > 0 && totalInputTokens > 0
+            ? ` [${Math.round((totalCachedTokens / totalInputTokens) * 100)}% cached]`
             : ""}
+          {" · out "}{formatTokenCount(totalOutputTokens)}
           {totalCost > 0 ? `  ·  ~${formatCost(totalCost)} est` : ""}
           {pendingPermission
             ? "  ·  awaiting permission"
@@ -1168,11 +1476,37 @@ export function isLiteralSlashCommand(value: string): boolean {
   return true;
 }
 
+export function parseUsageArgs(
+  arg: string,
+): { scope: "session" | "cwd" | "all"; daysBack?: number } {
+  const parts = arg.trim().split(/\s+/).filter((p) => p.length > 0);
+  let scope: "session" | "cwd" | "all" = "cwd";
+  let daysBack: number | undefined;
+  for (const part of parts) {
+    const lower = part.toLowerCase();
+    if (lower === "session" || lower === "cwd" || lower === "all") {
+      scope = lower;
+      continue;
+    }
+    const n = Number.parseInt(lower, 10);
+    if (Number.isFinite(n) && n > 0) {
+      daysBack = Math.min(n, 365);
+    }
+  }
+  return daysBack !== undefined ? { scope, daysBack } : { scope };
+}
+
 export function formatTokenCount(n: number): string {
   if (n < 1000) return String(n);
   if (n < 10_000) return `${(n / 1000).toFixed(1)}k`;
   if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
   return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function formatElapsed(ms: number): string {
@@ -1187,6 +1521,7 @@ export function formatElapsed(ms: number): string {
 }
 
 export const PASTE_THRESHOLD = 200;
+export const PASTE_WORD_THRESHOLD = 18;
 
 export type PasteKind = "text" | "file" | "image";
 export interface PasteEntry {
@@ -1210,11 +1545,19 @@ export const PLACEHOLDER_PATTERN_SOURCE =
   "\\[(?:Pasted Content|File|Image) #(\\d+)\\]";
 
 export function detectPaste(input: string): boolean {
-  if (input.includes("\x1b[200~")) return true;
-  if (input.startsWith("[200~")) return true;
-  if (input.length > PASTE_THRESHOLD) return true;
-  if (/[\r\n]/.test(input)) return true;
+  const hasMarker =
+    input.includes("\x1b[200~") || input.startsWith("[200~");
+  const stripped = hasMarker ? stripPasteMarkers(input) : input;
+  if (/[\r\n]/.test(stripped)) return true;
+  if (stripped.length > PASTE_THRESHOLD) return true;
+  if (hasMarker && countWords(stripped) > PASTE_WORD_THRESHOLD) return true;
   return false;
+}
+
+function countWords(s: string): number {
+  const trimmed = s.trim();
+  if (trimmed.length === 0) return 0;
+  return trimmed.split(/\s+/).length;
 }
 
 export function classifyPaste(raw: string, cwd: string): PasteEntry {
@@ -1577,6 +1920,7 @@ async function persistEvent(
           content: ev.content,
           contentTruncated: false,
           ...(ev.error !== undefined && { error: ev.error }),
+          ...(ev.artifact && { artifact: ev.artifact }),
         });
       } catch (err: unknown) {
         logger.warn(
@@ -1613,15 +1957,15 @@ function HistoryRow({ entry }: { entry: HistoryEntry }): React.JSX.Element {
       );
     case "user":
       return (
-        <Box>
+        <Text color={USER_DIM}>
           <Text color={ACCENT} bold>
             {"› "}
           </Text>
-          <Text>{entry.text}</Text>
-        </Box>
+          {entry.text}
+        </Text>
       );
     case "assistant":
-      return <Text>{entry.text}</Text>;
+      return renderAssistantLine(entry.text);
     case "tool":
       return <Text color={TOOL_GRAY}>{entry.text}</Text>;
     case "system":

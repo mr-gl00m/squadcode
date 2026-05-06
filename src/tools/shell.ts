@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { z } from "zod";
+import { applyYoloShellGuard } from "../yolo/index.js";
 import { resolveAndValidate } from "./path.js";
 import { defineTool } from "./types.js";
 import type { ToolContext, ToolResult } from "./types.js";
@@ -14,9 +15,36 @@ type ShellInput = z.infer<typeof SHELL_INPUT>;
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_OUTPUT_BYTES = 200_000;
+export const FORCE_KILL_GRACE_MS = 3_000;
 const IS_WINDOWS = process.platform === "win32";
 
-function killTree(child: ChildProcess): void {
+function sendGracefulSignal(child: ChildProcess): void {
+  if (child.pid === undefined) return;
+  if (IS_WINDOWS) {
+    spawn("taskkill", ["/T", "/PID", String(child.pid)], {
+      stdio: "ignore",
+      windowsHide: true,
+    }).on("error", () => {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        /* swallow */
+      }
+    });
+    return;
+  }
+  try {
+    process.kill(-child.pid, "SIGTERM");
+  } catch {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* swallow */
+    }
+  }
+}
+
+function sendForceSignal(child: ChildProcess): void {
   if (child.pid === undefined) return;
   if (IS_WINDOWS) {
     spawn("taskkill", ["/F", "/T", "/PID", String(child.pid)], {
@@ -42,6 +70,15 @@ function killTree(child: ChildProcess): void {
   }
 }
 
+function killTree(child: ChildProcess): void {
+  if (child.pid === undefined) return;
+  sendGracefulSignal(child);
+  setTimeout(() => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    sendForceSignal(child);
+  }, FORCE_KILL_GRACE_MS).unref();
+}
+
 async function runCommand(
   input: ShellInput,
   ctx: ToolContext,
@@ -54,6 +91,23 @@ async function runCommand(
       })
     : ctx.cwd;
 
+  let command = input.command;
+  let yoloPreamble = "";
+  if (ctx.yolo) {
+    const guard = applyYoloShellGuard(input.command, ctx.yolo);
+    if (guard.kind === "rejected") {
+      return {
+        ok: false,
+        content: guard.reason,
+        error: "YOLO_SANDBOX_VIOLATION",
+      };
+    }
+    if (guard.kind === "rewritten") {
+      command = guard.command;
+      yoloPreamble = `(YOLO rewrite) ${guard.notes.join("; ")}\n\n`;
+    }
+  }
+
   return await new Promise<ToolResult>((resolve) => {
     const child = IS_WINDOWS
       ? spawn(
@@ -64,11 +118,11 @@ async function runCommand(
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
-            input.command,
+            command,
           ],
           { cwd, windowsHide: true },
         )
-      : spawn(input.command, [], {
+      : spawn(command, [], {
           cwd,
           shell: true,
           detached: true,
@@ -128,12 +182,24 @@ async function runCommand(
       ctx.signal.removeEventListener("abort", onAbort);
       const parts: string[] = [`exit_code: ${code ?? "null"}`];
       if (signal) parts.push(`signal: ${signal}`);
-      if (timedOut) parts.push(`(timed out after ${timeout}ms; process tree killed)`);
-      if (aborted) parts.push("(aborted by user; process tree killed)");
+      if (timedOut) {
+        const killNote =
+          signal === "SIGKILL"
+            ? `(timed out after ${timeout}ms; force-killed after ${FORCE_KILL_GRACE_MS}ms grace)`
+            : `(timed out after ${timeout}ms; process tree terminated)`;
+        parts.push(killNote);
+      }
+      if (aborted) {
+        const killNote =
+          signal === "SIGKILL"
+            ? `(aborted by user; force-killed after ${FORCE_KILL_GRACE_MS}ms grace)`
+            : "(aborted by user; process tree terminated)";
+        parts.push(killNote);
+      }
       if (stdout) parts.push(`stdout:\n${stdout}`);
       if (stderr) parts.push(`stderr:\n${stderr}`);
       if (truncated) parts.push("(output truncated)");
-      const body = parts.join("\n\n");
+      const body = `${yoloPreamble}${parts.join("\n\n")}`;
       const ok = code === 0 && !timedOut && !aborted;
       const errorCode = aborted
         ? "ABORTED"
@@ -150,7 +216,7 @@ async function runCommand(
 export const shellTool = defineTool({
   name: "Shell",
   description:
-    "Run a shell command via the platform default shell. Captures stdout/stderr; default timeout 120s, max 600s. Process tree is killed on timeout or abort.",
+    "Run a shell command via the platform default shell. Captures stdout/stderr; default timeout 120s, max 600s. Process tree gets SIGTERM first; SIGKILL after a 3s grace if still running.",
   inputSchema: {
     type: "object",
     properties: {

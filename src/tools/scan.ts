@@ -1,13 +1,33 @@
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
+import { isProtectedPath } from "./protected.js";
 
 const PRUNED_DIRS = new Set([
+  // VCS metadata
   "node_modules",
   ".git",
+  ".svn",
+  ".hg",
+  // Build outputs
   "dist",
-  ".squad",
+  "build",
+  "target",
+  ".next",
+  ".nuxt",
+  ".turbo",
+  ".cache",
+  ".parcel-cache",
+  "coverage",
+  // Python
   ".venv",
+  "venv",
   "__pycache__",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".tox",
+  // Squad's own state
+  ".squad",
 ]);
 
 export async function* walkFiles(root: string): AsyncIterable<string> {
@@ -25,6 +45,7 @@ export async function* walkFiles(root: string): AsyncIterable<string> {
       if (PRUNED_DIRS.has(entry.name)) continue;
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
+        if (isProtectedPath(full, { cwd: root })) continue;
         stack.push(full);
       } else if (entry.isFile()) {
         yield full;
@@ -34,7 +55,7 @@ export async function* walkFiles(root: string): AsyncIterable<string> {
 }
 
 export function compileGlob(pattern: string): RegExp {
-  const SENTINEL = "GLOB_DOUBLESTAR";
+  const SENTINEL = "GLOB_DOUBLESTAR";
   const escaped = pattern
     .replace(/[.+^$()|{}\\]/g, "\\$&")
     .replace(/\*\*/g, SENTINEL)

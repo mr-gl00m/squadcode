@@ -1,5 +1,11 @@
 import type { CanonicalToolCall } from "../providers/types.js";
 
+export interface ArtifactRef {
+  path: string;
+  sha256: string;
+  fullSizeBytes: number;
+}
+
 export interface SessionMetadata {
   sessionId: string;
   startedAt: string;
@@ -50,6 +56,7 @@ export interface ToolResultPayload {
   content: string;
   contentTruncated: boolean;
   error?: string;
+  artifact?: ArtifactRef;
 }
 
 export type SessionRecordPayload =

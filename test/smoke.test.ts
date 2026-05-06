@@ -297,13 +297,18 @@ describe("Ink composer", () => {
     expect(isSubmitInput("\r", true)).toBe(true);
   });
 
-  it("detects pastes by length, embedded newlines, or bracketed markers", () => {
+  it("detects pastes by length, embedded newlines, or bracketed markers over the word threshold", () => {
     expect(detectPaste("a")).toBe(false);
     expect(detectPaste("a".repeat(201))).toBe(true);
     expect(detectPaste("two\nlines")).toBe(true);
-    expect(detectPaste("\x1b[200~tiny\x1b[201~")).toBe(true);
-    // Ink strips the leading ESC byte before our handler sees it — must still match.
-    expect(detectPaste("[200~tiny[201~")).toBe(true);
+    // Short bracketed pastes (<= 18 words, no newlines) render inline as typed text.
+    expect(detectPaste("\x1b[200~tiny\x1b[201~")).toBe(false);
+    expect(detectPaste("[200~tiny[201~")).toBe(false);
+    // Bracketed pastes that exceed the word threshold collapse to a placeholder.
+    const manyWords = `\x1b[200~${"word ".repeat(20).trim()}\x1b[201~`;
+    expect(detectPaste(manyWords)).toBe(true);
+    // Bracketed paste with embedded newline always collapses regardless of length.
+    expect(detectPaste("\x1b[200~one\ntwo\x1b[201~")).toBe(true);
   });
 
   it("strips paste markers with or without leading ESC byte", () => {
@@ -580,65 +585,92 @@ describe("pricing with cached input tokens", () => {
 });
 
 describe("project permissions", () => {
-  it("loadProjectAllow returns an empty set when no settings file exists", async () => {
-    const { loadProjectAllow } = await import("../src/permissions/project.js");
+  it("loadProjectRules returns an empty map when no settings file exists", async () => {
+    const { loadProjectRules } = await import("../src/permissions/project.js");
     const dir = await mkdtemp(join(tmpdir(), "squad-code-"));
-    const result = await loadProjectAllow(dir);
-    expect(result).toBeInstanceOf(Set);
+    const result = await loadProjectRules(dir);
+    expect(result).toBeInstanceOf(Map);
     expect(result.size).toBe(0);
   });
 
-  it("persistProjectAllow writes a new file with the granted tool", async () => {
-    const { persistProjectAllow, loadProjectAllow, getProjectSettingsPath } =
+  it("persistProjectRule writes a new file with the rule under permissions.rules", async () => {
+    const { persistProjectRule, loadProjectRules, getProjectSettingsPath } =
       await import("../src/permissions/project.js");
     const dir = await mkdtemp(join(tmpdir(), "squad-code-"));
-    await persistProjectAllow(dir, "Read");
+    await persistProjectRule(dir, "Shell", "git status *", "allow");
     const path = getProjectSettingsPath(dir);
     const raw = JSON.parse(await readFile(path, "utf-8"));
-    expect(raw.permissions.alwaysAllowed).toEqual(["Read"]);
-    const reloaded = await loadProjectAllow(dir);
-    expect([...reloaded]).toEqual(["Read"]);
+    expect(raw.permissions.rules).toEqual({
+      Shell: { "git status *": "allow" },
+    });
+    const reloaded = await loadProjectRules(dir);
+    expect(reloaded.get("Shell")).toEqual([
+      { pattern: "git status *", action: "allow" },
+    ]);
   });
 
-  it("persistProjectAllow appends to an existing list and preserves unknown keys", async () => {
-    const { persistProjectAllow, loadProjectAllow, getProjectSettingsPath } =
+  it("persistProjectRule merges into an existing rule set and preserves unknown keys", async () => {
+    const { persistProjectRule, loadProjectRules, getProjectSettingsPath } =
       await import("../src/permissions/project.js");
     const dir = await mkdtemp(join(tmpdir(), "squad-code-"));
     const path = getProjectSettingsPath(dir);
     await atomicWriteJson(path, {
-      version: "0.1.0",
-      permissions: { alwaysAllowed: ["Read"] },
+      version: "0.2.0",
+      permissions: { rules: { Read: { "*.md": "allow" } } },
       futureFeature: { example: true },
     });
-    await persistProjectAllow(dir, "Glob");
+    await persistProjectRule(dir, "Shell", "npm test *", "allow");
     const raw = JSON.parse(await readFile(path, "utf-8"));
-    expect(raw.permissions.alwaysAllowed).toEqual(["Glob", "Read"]);
+    expect(raw.permissions.rules).toEqual({
+      Read: { "*.md": "allow" },
+      Shell: { "npm test *": "allow" },
+    });
     expect(raw.futureFeature).toEqual({ example: true });
-    const reloaded = await loadProjectAllow(dir);
-    expect([...reloaded].sort()).toEqual(["Glob", "Read"]);
+    const reloaded = await loadProjectRules(dir);
+    expect(reloaded.get("Read")).toEqual([
+      { pattern: "*.md", action: "allow" },
+    ]);
+    expect(reloaded.get("Shell")).toEqual([
+      { pattern: "npm test *", action: "allow" },
+    ]);
   });
 
-  it("persistProjectAllow is idempotent — granting the same tool twice doesn't duplicate", async () => {
-    const { persistProjectAllow, getProjectSettingsPath } = await import(
+  it("persistProjectRule is idempotent — same tool/pattern/action doesn't duplicate or churn", async () => {
+    const { persistProjectRule, getProjectSettingsPath } = await import(
       "../src/permissions/project.js"
     );
     const dir = await mkdtemp(join(tmpdir(), "squad-code-"));
-    await persistProjectAllow(dir, "Read");
-    await persistProjectAllow(dir, "Read");
+    await persistProjectRule(dir, "Read", "*.md", "allow");
+    await persistProjectRule(dir, "Read", "*.md", "allow");
     const raw = JSON.parse(
       await readFile(getProjectSettingsPath(dir), "utf-8"),
     );
-    expect(raw.permissions.alwaysAllowed).toEqual(["Read"]);
+    expect(raw.permissions.rules).toEqual({ Read: { "*.md": "allow" } });
   });
 
-  it("loadProjectAllow handles a malformed settings file gracefully", async () => {
-    const { loadProjectAllow, getProjectSettingsPath } = await import(
+  it("loadProjectRules converts the legacy permissions.alwaysAllowed array into wildcard-allow rules", async () => {
+    const { loadProjectRules, getProjectSettingsPath } = await import(
+      "../src/permissions/project.js"
+    );
+    const dir = await mkdtemp(join(tmpdir(), "squad-code-"));
+    const path = getProjectSettingsPath(dir);
+    await atomicWriteJson(path, {
+      version: "0.1.0",
+      permissions: { alwaysAllowed: ["Read", "Glob"] },
+    });
+    const map = await loadProjectRules(dir);
+    expect(map.get("Read")).toEqual([{ pattern: "*", action: "allow" }]);
+    expect(map.get("Glob")).toEqual([{ pattern: "*", action: "allow" }]);
+  });
+
+  it("loadProjectRules handles a malformed settings file gracefully", async () => {
+    const { loadProjectRules, getProjectSettingsPath } = await import(
       "../src/permissions/project.js"
     );
     const dir = await mkdtemp(join(tmpdir(), "squad-code-"));
     const path = getProjectSettingsPath(dir);
     await atomicWriteText(path, "{ this is not valid json");
-    const result = await loadProjectAllow(dir);
+    const result = await loadProjectRules(dir);
     expect(result.size).toBe(0);
   });
 });

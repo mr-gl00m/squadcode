@@ -1,4 +1,9 @@
-export type ProviderName = "anthropic" | "openai" | "deepseek" | "ollama";
+// User-facing provider identifier from the catalog row's `provider_id`
+// field — surfaced as LLMProvider.name and consumed by pricing / cost /
+// audit. Common values: "deepseek", "openai", "anthropic", "ollama",
+// "groq", "together", "fireworks". Catalog overrides can introduce new
+// values, so the type is open.
+export type ProviderName = string;
 
 export type CanonicalRole = "system" | "user" | "assistant" | "tool";
 
@@ -67,6 +72,7 @@ export type CanonicalEvent =
       error?: string;
       reason?: "denied" | "executed" | "unknown_tool" | "aborted";
       content: string;
+      artifact?: { path: string; sha256: string; fullSizeBytes: number };
     }
   | { type: "usage"; usage: CanonicalUsage }
   | { type: "done"; reason: CanonicalFinishReason }

@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isProtectedPath } from "./protected.js";
 
 export class PathValidationError extends Error {
   override readonly name = "PathValidationError";
@@ -8,6 +9,10 @@ export class PathValidationError extends Error {
 export interface ValidatePathOptions {
   root: string;
   mustExist?: boolean;
+  // Additional directories outside `root` whose subtrees are also allowed.
+  // Used by Read to permit paths under `~/.squad/sessions/<id>/artifacts/`
+  // even though the artifact dir lives outside cwd.
+  extraAllowedRoots?: string[];
 }
 
 function isUnderRoot(root: string, candidate: string): boolean {
@@ -18,20 +23,47 @@ function isUnderRoot(root: string, candidate: string): boolean {
   return true;
 }
 
+async function resolveExtraRoots(
+  paths: string[] | undefined,
+): Promise<string[]> {
+  if (!paths || paths.length === 0) return [];
+  const out: string[] = [];
+  for (const p of paths) {
+    try {
+      out.push(await fs.realpath(resolve(p)));
+    } catch {
+      // Extra root that doesn't exist on disk is harmless — just skip it.
+    }
+  }
+  return out;
+}
+
+function isUnderAnyRoot(roots: string[], candidate: string): boolean {
+  for (const r of roots) if (isUnderRoot(r, candidate)) return true;
+  return false;
+}
+
 export async function resolveAndValidate(
   inputPath: string,
   opts: ValidatePathOptions,
 ): Promise<string> {
   const rootReal = await fs.realpath(resolve(opts.root));
+  const extraRoots = await resolveExtraRoots(opts.extraAllowedRoots);
   const absolute = isAbsolute(inputPath)
     ? resolve(inputPath)
     : resolve(opts.root, inputPath);
 
   if (opts.mustExist) {
     const real = await fs.realpath(absolute);
-    if (!isUnderRoot(rootReal, real)) {
+    const insideExtra = isUnderAnyRoot(extraRoots, real);
+    if (!isUnderRoot(rootReal, real) && !insideExtra) {
       throw new PathValidationError(
         `path "${inputPath}" resolves outside allowed root "${rootReal}"`,
+      );
+    }
+    if (!insideExtra && isProtectedPath(real, { cwd: rootReal })) {
+      throw new PathValidationError(
+        `path "${inputPath}" resolves to a protected directory (${real}); refusing to scan OS-sensitive paths`,
       );
     }
     return real;
@@ -56,12 +88,21 @@ export async function resolveAndValidate(
       prefix = parent;
       continue;
     }
-    if (!isUnderRoot(rootReal, realPrefix)) {
+    const insideExtra = isUnderAnyRoot(extraRoots, realPrefix);
+    if (!isUnderRoot(rootReal, realPrefix) && !insideExtra) {
       throw new PathValidationError(
         `path "${inputPath}" resolves outside allowed root "${rootReal}" (parent "${realPrefix}")`,
       );
     }
-    if (suffixParts.length === 0) return realPrefix;
-    return join(realPrefix, ...suffixParts.reverse());
+    const finalPath =
+      suffixParts.length === 0
+        ? realPrefix
+        : join(realPrefix, ...suffixParts.reverse());
+    if (!insideExtra && isProtectedPath(finalPath, { cwd: rootReal })) {
+      throw new PathValidationError(
+        `path "${inputPath}" resolves to a protected directory (${finalPath}); refusing to write to OS-sensitive paths`,
+      );
+    }
+    return finalPath;
   }
 }

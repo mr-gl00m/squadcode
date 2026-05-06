@@ -1,3 +1,4 @@
+import type { OutputStyle } from "../output-styles.js";
 import type { SkillEntry } from "../skills.js";
 
 export interface SlashContext {
@@ -8,15 +9,23 @@ export interface SlashContext {
   clear: () => void;
   messageCount: () => number;
   skills: () => Map<string, SkillEntry>;
+  outputStyles: () => Map<string, OutputStyle>;
+  activeStyleName: () => string | null;
+  setStyle: (name: string) => string | null;
+  clearStyle: () => void;
   costSummary: () => string;
+  usageReport: (arg: string) => string;
   toolList: () => string;
   sessionList: () => string;
+  yoloStatus?: () => string;
+  toggleYolo?: () => Promise<string>;
 }
 
 export type SlashFollowup =
   | { kind: "compact" }
   | { kind: "skill"; skill: SkillEntry; args: string }
-  | { kind: "list-skills" };
+  | { kind: "list-skills" }
+  | { kind: "yolo-toggle" };
 
 export interface SlashResult {
   message: string;
@@ -25,18 +34,21 @@ export interface SlashResult {
 }
 
 const HELP = [
-  "/provider <name>  switch provider",
-  "/model <name>     switch model for the next turn",
-  "/clear            reset the conversation history",
-  "/compact          summarize the conversation and replace history with the summary",
-  "/cost             show token usage and cost for this session",
-  "/tools            list registered tools",
-  "/sessions         list recent sessions in this directory",
-  "/skills           list loaded skills",
-  "/<skill-name>     invoke a loaded skill (run /skills to see what's available)",
-  "/resume           resume the most recent session (lands in Phase 4)",
-  "/help             this list",
-  "/exit, /quit      exit the REPL",
+  "/provider <name>      switch provider",
+  "/model <name>         switch model for the next turn",
+  "/clear                reset the conversation history",
+  "/compact              summarize the conversation and replace history with the summary",
+  "/cost                 show token usage and cost for this session",
+  "/usage [scope] [N]    cross-session usage ledger (scope: session | cwd | all; N = days to include, default 14)",
+  "/tools                list registered tools",
+  "/sessions             list recent sessions in this directory",
+  "/yolo                 toggle YOLO mode (sandbox + archive-on-delete + checklist; needs checklist.txt or CHECKLIST.md in cwd)",
+  "/skills               list loaded skills",
+  "/<skill-name>         invoke a loaded skill (run /skills to see what's available)",
+  "/output-style [name]  list output styles, or activate one (alias: /style; pass 'none' to clear)",
+  "/resume               resume the most recent session (lands in Phase 4)",
+  "/help                 this list",
+  "/exit, /quit          exit the REPL",
 ].join("\n");
 
 export function handleSlash(line: string, ctx: SlashContext): SlashResult {
@@ -75,6 +87,8 @@ export function handleSlash(line: string, ctx: SlashContext): SlashResult {
     }
     case "cost":
       return { message: ctx.costSummary() };
+    case "usage":
+      return { message: ctx.usageReport(arg) };
     case "tools":
       return { message: ctx.toolList() };
     case "sessions":
@@ -83,11 +97,58 @@ export function handleSlash(line: string, ctx: SlashContext): SlashResult {
       return {
         message: "/resume lands in Phase 4 (sessions). Stub for now.",
       };
+    case "yolo": {
+      if (!ctx.toggleYolo) {
+        return { message: "/yolo not available in this REPL mode" };
+      }
+      return {
+        message: ctx.yoloStatus ? ctx.yoloStatus() : "toggling YOLO...",
+        followup: { kind: "yolo-toggle" },
+      };
+    }
     case "exit":
     case "quit":
       return { message: "bye", exit: true };
     case "":
       return { message: HELP };
+    case "output-style":
+    case "style": {
+      const styles = ctx.outputStyles();
+      if (!arg) {
+        const active = ctx.activeStyleName();
+        const list = Array.from(styles.values()).sort((a, b) =>
+          a.name.localeCompare(b.name),
+        );
+        if (list.length === 0) {
+          return {
+            message:
+              "no output styles loaded (looked in ~/.squad/output-styles and ./.squad/output-styles)",
+          };
+        }
+        const lines = list.map((s) => {
+          const desc =
+            s.description.length > 100
+              ? s.description.slice(0, 97) + "..."
+              : s.description;
+          const tag = s.source === "project" ? " (project)" : "";
+          const here = active && active.toLowerCase() === s.name.toLowerCase()
+            ? " (active)"
+            : "";
+          return `  ${s.name}${tag}${here} — ${desc}`;
+        });
+        const header = active
+          ? `active: ${active}\n${list.length} style${list.length === 1 ? "" : "s"}:`
+          : `no active style\n${list.length} style${list.length === 1 ? "" : "s"}:`;
+        return { message: `${header}\n${lines.join("\n")}` };
+      }
+      if (arg.toLowerCase() === "none" || arg.toLowerCase() === "off") {
+        ctx.clearStyle();
+        return { message: "output style cleared" };
+      }
+      const err = ctx.setStyle(arg);
+      if (err) return { message: `output style switch failed: ${err}` };
+      return { message: `output style switched to ${arg}` };
+    }
     case "skills": {
       const skills = ctx.skills();
       const list = Array.from(skills.values()).sort((a, b) =>

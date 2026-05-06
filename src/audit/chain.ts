@@ -8,7 +8,8 @@ export type AuditAction =
   | "tool_call"
   | "tool_result"
   | "permission_decision"
-  | "session_archived";
+  | "session_archived"
+  | "hook_fire";
 
 export interface AuditAppendInput {
   sessionId: string;

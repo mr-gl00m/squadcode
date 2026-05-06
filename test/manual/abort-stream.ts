@@ -1,5 +1,5 @@
 import { config } from "dotenv";
-import { createDeepSeekProvider } from "../../src/providers/deepseek.js";
+import { createLlmChatProvider } from "../../src/providers/llm-chat.js";
 
 config();
 
@@ -9,9 +9,11 @@ if (!apiKey) {
   process.exit(2);
 }
 
-const provider = createDeepSeekProvider({
+const provider = createLlmChatProvider({
   apiKey,
   baseUrl: process.env["DEEPSEEK_BASE_URL"] ?? "https://api.deepseek.com",
+  providerId: "deepseek",
+  capabilities: { tool_use: true, reasoning: true, cache_control: true },
 });
 
 const abort = new AbortController();
