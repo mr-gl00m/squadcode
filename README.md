@@ -165,11 +165,11 @@ Not an IDE plugin or a hosted product. Squad Code's job is vetting models (local
 
 ## Roadmap
 
-- v1.1 (shipped): catalog-driven multi-provider — `llm-chat`, `llm-message`, `llm-response`, `llm-local`. OpenAI Responses API, Anthropic Messages API with `cache_control`, hooks (`PreToolUse` / `PostToolUse` / `SessionStart` / `SessionEnd` / `UserPromptSubmit`), pattern-based permissions with sensitive defaults and broadened `[A]`/`[P]` scope (arity-prefixed verbs for `Shell`, parent-dir glob for path tools), per-turn usage ledger, artifact storage for oversized tool output, deferred-schema tool catalog (`ToolSearch`), apply-patch tool, YOLO mode with sandbox + archive-on-delete + checklist rails.
-- v1.2: subagent layer (`Agent` tool, depth=1, four concurrent slots, per-agent model selection across all four kinds), TUI panels, `Ctrl+K` kill picker, anguish-meter observability, codex / claude as external CLI subagent backends.
-- Polish: markdown rendering in the REPL, syntax highlighting, `--output-format json` and `--output-format stream-json`, hooks UI surfacing, auto-compact mid-session toggle.
-- Indefinitely deferred: MCP servers, custom agents-as-config beyond `.squad/agents/`, IDE bridge, remote sessions.
-- Compatibility with other tools / projects created by me.
+- [✓] v1.1 (shipped): catalog-driven multi-provider — `llm-chat`, `llm-message`, `llm-response`, `llm-local`. OpenAI Responses API, Anthropic Messages API with `cache_control`, hooks (`PreToolUse` / `PostToolUse` / `SessionStart` / `SessionEnd` / `UserPromptSubmit`), pattern-based permissions with sensitive defaults and broadened `[A]`/`[P]` scope (arity-prefixed verbs for `Shell`, parent-dir glob for path tools), per-turn usage ledger, artifact storage for oversized tool output, deferred-schema tool catalog (`ToolSearch`), apply-patch tool, YOLO mode with sandbox + archive-on-delete + checklist rails.
+- [-] v1.2: subagent layer (`Agent` tool, depth=1, four concurrent slots, per-agent model selection across all four kinds), TUI panels, `Ctrl+K` kill picker, anguish-meter observability, codex / claude as external CLI subagent backends.
+- [-] Polish: markdown rendering in the REPL, syntax highlighting, `--output-format json` and `--output-format stream-json`, hooks UI surfacing, auto-compact mid-session toggle.
+- [-] Indefinitely deferred: MCP servers, custom agents-as-config beyond `.squad/agents/`, IDE bridge, remote sessions.
+- [-] Compatibility with other tools / projects created by me.
 
 ## License
 [MIT](./LICENSE). Copyright © 2026 Nathan Seals / Nexus Labs
