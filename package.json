@@ -1,6 +1,6 @@
 {
   "name": "squad-code",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Provider-neutral local-first CLI agent: streaming, tool use, sessions, permissions across DeepSeek, OpenAI, and Anthropic.",
   "license": "MIT",
   "author": "Cid",
@@ -10,9 +10,9 @@
   },
   "scripts": {
     "dev": "tsx watch bin/squad.ts",
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-assets.mjs",
     "build:watch": "tsc --watch --preserveWatchOutput",
-    "prepare": "tsc",
+    "prepare": "tsc && node scripts/copy-assets.mjs",
     "start": "node dist/bin/squad.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -23,6 +23,7 @@
     "squadcode": "./dist/bin/squad.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.93.0",
     "better-sqlite3": "^11.7.0",
     "commander": "^12.1.0",
     "dotenv": "^16.4.7",
