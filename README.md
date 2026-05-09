@@ -7,7 +7,7 @@
    ╚══════╝ ╚══▀▀═╝  ╚═════╝ ╚═╝  ╚═╝╚═════╝      ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝  
    --------------------------------------------------------------------------------
 ```
-I needed a better way to use LLM APIs and local models for coding and whatnot in my day to day. Codex is slow and feels like a mess. So I made this. This is a local CLI agent that streams from any provider through one canonical event loop.
+I needed a better way to use LLM APIs and local models for coding and whatnot in my day to day. The existing options either tie themselves to one vendor or skip the agent loop entirely, and I wanted something I could vet local models against on the same harness as a frontier API. So I made this. A local CLI agent that streams from any provider through one canonical event loop.
 
 ```text
 $ squadcode -p "summarize src/"
@@ -166,7 +166,7 @@ Not an IDE plugin or a hosted product. Squad Code's job is vetting models (local
 ## Roadmap
 
 - [✓] v1.1 (shipped): catalog-driven multi-provider — `llm-chat`, `llm-message`, `llm-response`, `llm-local`. OpenAI Responses API, Anthropic Messages API with `cache_control`, hooks (`PreToolUse` / `PostToolUse` / `SessionStart` / `SessionEnd` / `UserPromptSubmit`), pattern-based permissions with sensitive defaults and broadened `[A]`/`[P]` scope (arity-prefixed verbs for `Shell`, parent-dir glob for path tools), per-turn usage ledger, artifact storage for oversized tool output, deferred-schema tool catalog (`ToolSearch`), apply-patch tool, YOLO mode with sandbox + archive-on-delete + checklist rails.
-- [-] v1.2: subagent layer (`Agent` tool, depth=1, four concurrent slots, per-agent model selection across all four kinds), TUI panels, `Ctrl+K` kill picker, anguish-meter observability, codex / claude as external CLI subagent backends.
+- [-] v1.2: subagent layer (`Agent` tool, depth=1, four concurrent slots, per-agent model selection across all four kinds), TUI panels, `Ctrl+K` kill picker, anguish-meter observability, external CLI subagent backends with per-agent worktree isolation.
 - [-] Polish: markdown rendering in the REPL, syntax highlighting, `--output-format json` and `--output-format stream-json`, hooks UI surfacing, auto-compact mid-session toggle.
 - [-] Indefinitely deferred: MCP servers, custom agents-as-config beyond `.squad/agents/`, IDE bridge, remote sessions.
 - [-] Compatibility with other tools / projects created by me.

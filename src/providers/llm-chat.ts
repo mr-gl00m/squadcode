@@ -7,6 +7,7 @@ import type {
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
 import { ProviderError } from "../errors.js";
+import { parseToolArgs } from "./arg-repair.js";
 import type { ModelCapabilities } from "./catalog.js";
 import type {
   CanonicalEvent,
@@ -304,16 +305,7 @@ export function createLlmChatProvider(
     }
 
     for (const entry of pending.values()) {
-      let parsed: unknown = entry.argsBuffer;
-      if (entry.argsBuffer) {
-        try {
-          parsed = JSON.parse(entry.argsBuffer);
-        } catch {
-          parsed = entry.argsBuffer;
-        }
-      } else {
-        parsed = {};
-      }
+      const parsed = parseToolArgs(entry.argsBuffer);
       yield {
         type: "tool_call_done",
         id: entry.id,

@@ -11,6 +11,7 @@ import type {
   RawMessageStreamEvent,
 } from "@anthropic-ai/sdk/resources/messages.js";
 import { ProviderError } from "../errors.js";
+import { parseToolArgs } from "./arg-repair.js";
 import type { ModelCapabilities } from "./catalog.js";
 import type {
   CanonicalEvent,
@@ -401,16 +402,7 @@ export function createLlmMessageProvider(
             const active = blocks.get(ev.index);
             if (!active) break;
             if (active.kind === "tool_use") {
-              let parsed: unknown = active.tool.argsBuffer;
-              if (active.tool.argsBuffer.length > 0) {
-                try {
-                  parsed = JSON.parse(active.tool.argsBuffer);
-                } catch {
-                  parsed = active.tool.argsBuffer;
-                }
-              } else {
-                parsed = {};
-              }
+              const parsed = parseToolArgs(active.tool.argsBuffer);
               yield {
                 type: "tool_call_done",
                 id: active.tool.id,

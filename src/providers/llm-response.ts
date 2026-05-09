@@ -7,6 +7,7 @@ import type {
   ResponseStreamEvent,
 } from "openai/resources/responses/responses.js";
 import { ProviderError } from "../errors.js";
+import { parseToolArgs } from "./arg-repair.js";
 import type { ModelCapabilities } from "./catalog.js";
 import type {
   CanonicalEvent,
@@ -276,16 +277,7 @@ export function createLlmResponseProvider(
               ev.arguments && ev.arguments.length > 0
                 ? ev.arguments
                 : call.argsBuffer;
-            let parsed: unknown;
-            if (argsStr.length === 0) {
-              parsed = {};
-            } else {
-              try {
-                parsed = JSON.parse(argsStr);
-              } catch {
-                parsed = argsStr;
-              }
-            }
+            const parsed = parseToolArgs(argsStr);
             yield {
               type: "tool_call_done",
               id: call.callId,

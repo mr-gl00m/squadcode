@@ -53,6 +53,12 @@ const envSchema = z.object({
   CLI_MAX_TOOL_CONCURRENCY: z.coerce.number().int().positive().default(4),
 
   SQUAD_PROJECT_PERMS: boolFromString.default(true),
+
+  // Comma-separated list of skill directories to scan for user-level skills.
+  // Defaults to `~/.squad/skills` only. Set to a list like
+  // `~/.squad/skills,~/some/other/skills` to import skills from existing
+  // locations (e.g. another tool's skill library you already maintain).
+  SQUAD_USER_SKILL_DIRS: emptyToUndefined,
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -886,7 +886,7 @@ function App(opts: ReplOptions): React.JSX.Element {
           if (list.length === 0) {
             append(
               "system",
-              "no skills loaded (looked in ~/.codex/skills, ~/.claude/skills, and ./.squad/skills)",
+              "no skills loaded (configure SQUAD_USER_SKILL_DIRS in .env or add skills under ./.squad/skills)",
             );
           } else {
             setHistory((prev) => [
@@ -1973,12 +1973,7 @@ function HistoryRow({ entry }: { entry: HistoryEntry }): React.JSX.Element {
     case "error":
       return <Text color={SOFT_RED}>{entry.text}</Text>;
     case "skill": {
-      const tag =
-        entry.skillSource === "project"
-          ? " (project)"
-          : entry.skillSource === "codex"
-            ? " (codex)"
-            : "";
+      const tag = entry.skillSource === "project" ? " (project)" : "";
       return (
         <Text>
           {"  "}

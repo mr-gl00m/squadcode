@@ -31,6 +31,7 @@ import {
   updateDefaultSelection,
 } from "../settings.js";
 import { sanitizeForTerminal } from "../terminal.js";
+import { loadManifest } from "../tools/manifest.js";
 import { createToolRegistry, type ToolRegistry } from "../tools/registry.js";
 import { createPrintState, renderEvent } from "./print.js";
 import { runSessionsCli } from "./sessions.js";
@@ -167,6 +168,14 @@ export function defaultSystemPrompt(registry?: ToolRegistry): string {
         "Deferred tools (full schemas loaded on demand to keep the catalog small):\n" +
           lines.join("\n") +
           '\nTo make a deferred tool callable, invoke ToolSearch with query="select:Name1,Name2" or with keywords. Once a schema is loaded it stays available — no need to re-load before each call.',
+      );
+    }
+    const manifest = registry.getManifest();
+    if (manifest) {
+      parts.push(
+        `Project manifest: this project ships a deterministic file index at .crabmeat/index.json (${manifest.entries.length} entries, generated ${manifest.generated_at}). ` +
+          "Before searching for project files, call IndexList to see paths and one-line summaries, then IndexFetch to read the one you want. " +
+          "Fall back to Glob/Grep/Read only when the manifest doesn't cover what you need.",
       );
     }
   }
@@ -475,8 +484,8 @@ async function runPrintMode(opts: RootOptions): Promise<void> {
   }
   const provider = built;
   const prompt = opts.print ?? "";
-  const registry = createToolRegistry();
   const cwd = process.cwd();
+  const registry = createToolRegistry({ manifest: loadManifest(cwd) });
 
   let yolo: YoloSession | null = null;
   let yoloPromptAddendum = "";
@@ -663,8 +672,8 @@ async function runReplMode(opts: RootOptions): Promise<void> {
   }
   const provider = built;
   persistDefaultSelection(providerName, model);
-  const registry = createToolRegistry();
   const cwd = process.cwd();
+  const registry = createToolRegistry({ manifest: loadManifest(cwd) });
 
   let yolo: YoloSession | null = null;
   let yoloPromptAddendum = "";

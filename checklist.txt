@@ -1,0 +1,233 @@
+Squad Code -- Implementation Checklist
+
+Phase 0: scaffold -- Node 22+ TS project with commander, zod env, --help/--version
+[x] Runnable squad --help and squad --version from the tsc build
+[x] .env.example documenting every variable from the pitch's .env contract
+[x] ~/.squad/ created on first run with atomic settings.json
+[x] Pino rotating logger writing to ~/.squad/logs/squad.log
+[x] LICENSE file (MIT) at project root
+
+Phase 1: canonical events + DeepSeek adapter -- squad -p "hello" streams
+[x] providers/types.ts with LLMProvider, CanonicalRequest, CanonicalEvent union
+[x] providers/deepseek.ts implementing LLMProvider via openai SDK base-URL
+[x] engine/stream.ts driving one-shot conversation
+[x] cli/print.ts rendering canonical events to stdout
+[x] Smoke test: squad -p "hello" streams from real DeepSeek call
+
+Phase 2: tool loop + permissions -- agent calls tools, gated correctly
+[x] tools/ with Read, Write, Edit, Shell, Grep, Glob, TodoWrite + Tool interface
+[x] permissions/policy.ts enforcing read-only auto-allow vs mutating-prompt
+[x] permissions/prompt.ts synchronous TTY prompt with ~/.squad/pending/ fallback
+[x] engine/loop.ts running stream -> collect calls -> execute -> append -> continue
+[x] Path-traversal validation on every filesystem-touching tool
+[x] Smoke test: Glob auto-allows, Write triggers a permission prompt
+
+Phase 3: Ink REPL -- interactive squad with slash commands and status line
+[x] cli/repl.tsx with prompt box, streaming region, Ctrl-C interrupt, status line
+[x] Slash commands: /provider, /model, /clear, /resume, /help
+[x] --simple flag falls back to readline for plain terminals
+[x] Smoke test: full REPL conversation with /model switch and Ctrl-C interrupt
+
+Phase 4: sessions + audit chain -- JSONL transcripts, prev_hash audit log
+[x] sessions/writer.ts appending JSONL turns atomically with fsync per turn
+[x] sessions/index.ts (SQLite) for fast listing/searching
+[x] audit/chain.ts writing prev_hash-linked rows to ~/.squad/audit.db
+[x] cli/sessions.ts implementing sessions list and sessions show
+[x] --resume and --continue flags wired into the engine
+[x] migrations/0001_init.sql creating audit_log and sessions_index tables
+[x] Smoke test: kill mid-turn, --resume continues, audit chain validates
+
+Phase 5: ship MVP -- five commands verified, README, v1.0.0 tag
+[x] All five MVP commands run cleanly on a real DeepSeek key
+[x] README.md rewritten as a real release-quality README
+[x] v1.0.0 tag on local git repo
+[x] CHANGELOG.md and release notes initialized for v1.0.0
+
+Ship: five MVP commands streaming through DeepSeek with tool loop, permissions, and JSONL transcripts working end-to-end on real API calls
+[x] End-to-end verified on real DeepSeek runs of all five MVP commands
+
+============================================================
+v1.1.0 -- multi-provider + YOLO release (was Phases 6-9 subagent; subagent layer pushed to v1.2 because per-agent model selection only delivers the vetting unlock once multiple providers exist)
+============================================================
+
+Phase 6 (v1.1): harness fold-in -- hooks, apply-patch, tool-search, auto-compact, artifacts, usage-ledger, tab-title, pattern-permissions
+[x] hooks/{config,match,runner}.ts + tests; PreToolUse/PostToolUse/SessionStart/SessionEnd/UserPromptSubmit
+[x] tools/apply-patch.ts unified-diff editor + tests
+[x] tools/tool-search.ts deferred-schema discovery + tests
+[x] engine/auto-compact.ts context-pressure trigger + tests
+[x] sessions/artifacts.ts oversized-output offload to ~/.squad/sessions/<id>/artifacts/ + tests
+[x] sessions/usage-ledger.ts per-turn token + cost rows + migration 0002
+[x] cli/tab-title.ts OSC-2 terminal title status + tests
+[x] permissions: pattern-based RuleMap migration (defaults.ts, match.ts) + sensitive defaults + tests
+[x] engine/loop.ts repeat-guard reset-on-fresh-sig + tests
+[x] Cross-cutting wiring: hooks fire from program/repl/loop, /usage slash, scopePattern persisted on always-project grants
+
+Phase 7 (v1.1): catalog scaffold -- model catalog + dispatch infrastructure
+[x] providers/catalog.ts with ProviderKind, ModelEntry, loadCatalog, resolveEntry
+[x] providers/default-models.json seed (DeepSeek + Anthropic + OpenAI + Ollama rows)
+[x] base_url_env_var so existing .env-driven URL settings keep working
+[x] scripts/copy-assets.mjs copies non-TS assets to dist/ on build
+[x] test/catalog.test.ts covers default seed, user override merge, alias resolution, kind validation, strict mismatch refusal
+
+Phase 8 (v1.1): catalog-driven dispatch -- generalize deepseek/ollama into llm-chat/llm-local
+[x] providers/llm-chat.ts generic chat-completions adapter with capability flags (cache_control, reasoning)
+[x] providers/llm-local.ts thin wrapper (Ollama URL normalization, placeholder API key)
+[x] providers/dispatch.ts maps catalog entry to adapter factory; SSRF guard for llm-local
+[x] cli/program.ts rewired through loadCatalog + dispatchProvider; /provider switches via catalog
+[x] env.ts: AI_DEFAULT_PROVIDER widened to string, ANTHROPIC_MODEL added
+[x] ProviderName broadened from closed union to string for arbitrary provider_id support
+[x] Legacy deepseek.ts and ollama.ts deleted; test/manual/abort-stream.ts ported
+
+Phase 9 (v1.1): llm-message -- Anthropic Messages API adapter
+[x] @anthropic-ai/sdk dep added
+[x] providers/llm-message.ts: content-block streaming -> canonical, tool_result coalescing
+[x] cache_control ephemeral on system prompt last block + last tool entry when capability set
+[x] thinking blocks -> canonical reasoning_delta when thinking capability set
+[x] usage mapping: cache_creation + cache_read fold into inputTokens; cache_read separately as cachedInputTokens
+[x] Wired into dispatch.ts
+[x] test/llm-message.test.ts covers message conversion, tools, system field, stop reason mapping (14 tests)
+
+Phase 10 (v1.1): llm-response -- OpenAI Responses API adapter
+[x] providers/llm-response.ts: response.* SSE events keyed by output_index
+[x] function_call output items tracked by output_index; args accumulate across delta events
+[x] reasoning capability gates reasoning: { effort, summary } on the request
+[x] response.reasoning.delta + response.reasoning_summary_text.delta -> canonical reasoning_delta
+[x] cached_tokens from input_tokens_details surfaces as canonical cachedInputTokens (auto-cache > ~1024 tokens)
+[x] finishReason "tool_use" inferred from sawToolCall flag (Responses doesn't carry an explicit stop_reason union)
+[x] Wired into dispatch.ts
+[x] test/llm-response.test.ts covers input conversion, tool spec translation (11 tests)
+
+Phase 10 (v1.1): YOLO mode + permission rework
+[x] src/permissions/match.ts:103 broadens [A]/[P] path scope from literal path to <parent>/*; repo-root files keep literal scope
+[x] test/permissions.test.ts updated for the new scope behavior
+[x] src/yolo/index.ts: applyYoloShellGuard rejects abs paths outside cwd + cd escapes; rewrites rm/Remove-Item/del/unlink to mv into .archive/<iso-ts>/ (POSIX + PowerShell variants)
+[x] src/yolo/checklist.ts: looks for checklist.txt / CHECKLIST.md / lower+upper variants, refuses YOLO start if missing
+[x] src/yolo/index.ts: yoloSystemPromptAddendum explains the three rails so the model knows the contract
+[x] --yolo CLI flag wired into src/cli/program.ts (RootOptions + commander option)
+[x] /yolo slash command wired into src/cli/slash.ts with yolo-toggle followup
+[x] Plumbed through ToolContext.yolo, AgentLoopOptions.yolo, SimpleReplOptions, ReplOptions; both REPLs use mutable refs so /yolo toggles mid-session
+[x] Red YOLO badge in the Ink status footer when armed
+[x] test/yolo.test.ts (18 tests): sandbox guard, delete rewrites POSIX + Windows, prompt addendum
+[x] Real shell smoke: --yolo refuses without checklist; arms cleanly with checklist present (verified 2026-05-05)
+
+Phase 11 (v1.1): docs realigned + ship
+[x] README quickstart shows all four providers; "Adding a new model" section documents catalog
+[x] README YOLO section documents --yolo / /yolo, the three rails, and the difference from --dangerously-skip-permissions
+[x] README permissions paragraph documents the broadened [A]/[P] scope
+[x] PROJ_DOC.md status + post-MVP rewritten to reflect v1.1 multi-provider + YOLO scope
+[x] checklist.txt rewritten (this file)
+[x] CHANGELOG entry drafted for v1.1.0
+[x] Bump VERSION in src/cli/program.ts, src/cli/simple-repl.ts, src/cli/repl.tsx, and version in package.json to 1.1.0
+[x] Real-API smoke: squad -p with claude-sonnet-4-6 streams end-to-end against ANTHROPIC_API_KEY
+[ ] Real-API smoke: squad -p with gpt-5.1 streams end-to-end via Responses API against OPENAI_API_KEY
+[x] Real-API smoke: squad -p with deepseek-chat still works (no regression from the dispatch refactor)
+[ ] Real-API smoke: cross-provider session resume (start on deepseek, --resume under --provider anthropic)
+[ ] Real-API smoke: /cost shows accurate per-provider math including Anthropic cache_read savings
+[x] Real-API smoke: --yolo with a checklist.txt completes one autonomous run end-to-end (verified 2026-05-09 against deepseek-v4-pro; v4-flash spiraled on Unicode whack-a-mole and hit max_turns)
+[ ] v1.1.0 tag on local git repo
+
+Ship v1.1: catalog dispatch routes to all four adapter kinds end-to-end on real API calls + YOLO completes one autonomous run; engine/loop.ts received zero behavior changes during the cycle (architectural test passed -- only an optional yolo?: YoloSession field added for context propagation)
+[ ] Ship gate verified
+
+============================================================
+v1.1.x -- harness hardening (pre-subagent)
+============================================================
+
+Non-agent items only -- agent-related additions from the same batch are folded into Phase 12 below.
+
+Tool-loop resilience -- robustness against local-model misbehavior
+[x] providers/arg-repair.ts: 5-stage JSON repair ladder for malformed tool_calls.function.arguments (strict parse -> strip in-string control chars -> strip trailing commas -> balance braces -> strip excess closers -> {}); 1MB cap; wired into llm-chat/llm-message/llm-response tool_call_done emission; 20 tests in test/arg-repair.test.ts
+[x] src/engine/loop.ts: completes the loop-guard pair. Repeat-detection half was already in place from Phase 6 (3-streak with fresh-signature reset, canonicalStringify-based signature, satisfyUnfulfilledCalls-clean halt). This batch added the consecutive-failure half: warn at 3, halt at 8 with REPEATED_TOOL_FAILURES; counts executed-and-failed plus unknown-tool, ignores user denials and aborts; 5 tests in test/loop-failure-guard.test.ts
+[x] src/tools/omission-placeholder.ts + edit.ts/write.ts wiring: detects shorthand omission placeholders ('// rest of methods ...', '(rest of code ...)', etc.) and refuses with EDIT_OMISSION_PLACEHOLDER / WRITE_OMISSION_PLACEHOLDER before any file I/O. Only refuses when new_string/content adds a placeholder not present in old_string (preserving placeholder text in old_string is allowed). 20 tests in test/omission-placeholder.test.ts. A Levenshtein fuzzy-match ladder for near-miss recovery is deferred to v1.3.
+
+Timing + sanitization -- defensive primitives
+[x] src/deadline-timer.ts: AbortController wrapper with pause/resume/extend; ~80 LOC; 11 tests in test/deadline-timer.test.ts; primitive only -- wiring into the permission-prompt path so the budget pauses while waiting for user input is a deferred follow-up (no per-turn budget exists yet to plumb)
+[ ] tools/shell.ts: env-allowlist sanitize for spawned children (PATH/HOME/TMP/TERM/locale baseline, strict mode auto-on under CI, block credential-shaped vars)
+[ ] providers/schema-sanitize.ts: tool-schema preflight (collapse anyOf:[X,{type:null}] -> X with nullable, inject properties:{} on bare objects, prune dangling required, collapse single-element oneOf/allOf)
+
+Observability + integration harness -- vetting-purpose recording infrastructure
+[ ] hooks/jsonl-sink.ts: JsonlHookSink composable sink with atomic append, directory-create, ToolLifecycle{phase} events (precheck/dispatching/completed/failed)
+[ ] cli/stream-json.ts: stream-json output format (newline-delimited typed events: init/message/tool_use/tool_result/error/result with per-model token+cache breakdown)
+[ ] integration-tests/golden/: provider event-stream fixtures + replay harness for offline agent-loop regression tests
+[ ] scripts/deflake.mjs: npm run deflake -- --runs=N --command=... for repeated-run timing-sensitive E2E tests
+
+Release confidence + baselines -- ship discipline (Cid's strategic doc backlog #1-4)
+[ ] docs/release-confidence.md: Squad Code ship gate playbook -- build, typecheck, unit, audit-validate, real-provider smoke, YOLO smoke, subagent smoke once v1.2 lands; local-first scope, no telemetry
+[ ] memory-tests/transcript-replay.test.ts: long-transcript replay memory baseline with committed reference numbers + update flag
+[ ] perf-tests/agent-loop.test.ts: synthetic 3-turn agent-loop latency baseline with committed reference numbers + update flag
+
+Error + routing visibility -- failure-mode disambiguation
+[ ] providers/llm-error.ts: error taxonomy (RateLimited{retry_after}/ServerError/Network/Timeout/Auth/InvalidRequest/Model/ContentPolicy/Parse/ContextLength/Other) with is_retryable() and 400-body-keyword disambiguation (context_length/content_policy/safety); ModelVisibleError sentinel for "this error goes to the model vs stops the loop"
+[ ] providers/dispatch.ts: surface fallback_chain in resolve telemetry (provider lookup -> alias -> default chain visible to caller)
+
+Deferred to v1.3 (out-of-scope for v1.1.x batch -- bigger work, post-subagent)
+[ ] engine/cycle-manager.ts: checkpoint-restart with structured briefing (~3K-token decisions/constraints/hypotheses, NOT tool output or file contents), recalibrated for local-model 8-32K windows
+[ ] tools/edit.ts: full fallback ladder (exact -> flexible whitespace -> regex -> Levenshtein 10%); JIT discovery in v1.1.x is the cheap first slice
+[ ] tools/base-invocation.ts: refactor every tool into validate/confirm/execute/display lifecycle -- moderate cross-cutting refactor
+[ ] hooks/post-edit-diagnostics.ts: collect LSP diagnostics after write/edit/apply-patch, inject before next model request
+[ ] sessions/snapshots.ts: side-snapshot revert_turn under ~/.squad/snapshots/<project>/, isolated from user .git via getShadowRepoEnv-style env sanitization
+[ ] providers/auto-route.ts: --model auto deterministic keyword heuristic (search/lookup -> small, debug/error -> big, default -> medium) as fallback floor under any LLM router
+
+============================================================
+v1.2.0 -- subagent layer (deferred from prior v1.1 plan)
+============================================================
+
+Phase 12 (v1.2): subagent foundations -- agent layer with spawn, run, kill, return at depth=1
+[ ] agents/types.ts with SubagentDef, SubagentRecord, AgentStatus union (completed/failed_unfulfilled/scope_refused/anguish_terminal/user_killed/user_released)
+[ ] agents/identity.ts two-letter+digit designations (KT-4 style) unique among living subagents -- clean-room rebuild, not lifted from Mister Fetch
+[ ] agents/anguish.ts pressure scalar A in [0,1] from time/retry/budget/ambiguity -- observability only, never feeds back into the model's prompt
+[ ] agents/howl.ts in-process pub/sub for lifecycle/anguish/roster with turn-buffered commit
+[ ] agents/context.ts AsyncLocalStorage<SubagentContext> with agentId, parentAgentId, slotKey, model, abortController
+[ ] agents/loader.ts reads .squad/agents/<name>.md frontmatter into SubagentDef (name, whenToUse, tools, model, systemPrompt)
+[ ] agents/registry.ts Map<AgentId, SubagentRecord> with depth=1 cap and 4-slot concurrent ceiling
+[ ] agents/spawn.ts launches isolated runAgentLoop with subagent's tool allowlist + model + new AbortController
+[ ] agents/kill.ts cascade abort via the controller, terminationReason 'user killed' or 'cascade from parent'
+[ ] tools/agent.ts Agent tool exposed to the model: { description, prompt, subagent_type } -> structured payload
+[ ] agents/message-bus.ts: pub/sub bus wrapping permissions/policy.ts; derive(subagentName) clones bus with publish-injection so subagent confirmations carry source agent identity (scope-lock by construction); correlation-ID request<TReq,TRes>() pattern for async confirmations
+[ ] agents/registry-build.ts: clone-bound per-subagent ToolRegistry honoring SubagentDef.tools filter with wildcards (*, mcp_*, mcp_<server>_*); skip Kind.Agent tools to enforce depth=1 by construction
+[ ] prompts/subagent-output-format.md: structured report contract (### SUMMARY -> ### EVIDENCE with path:line citations -> ### CHANGES with every write performed -> ### RISKS -> ### BLOCKERS); honesty clause + parent audits tool log against CHANGES
+[ ] permissions/prompt.ts: surface source-agent metadata on every prompt (agent_id, cwd/worktree, provider/model, command/file, yolo state); audit row matches; pattern fits message-bus derive() above
+[ ] Hard scope lock: subagent system prompt enforces single-task contract per FETCH §3, status=scope_refused on expansion
+[ ] Memory ephemerality: subagent returns one structured payload, working messages discarded on terminate
+[ ] Smoke test: parent spawns red-team subagent, subagent runs, returns payload, parent continues with payload only
+
+Phase 13 (v1.2): long-running primitives -- backgrounded jobs + LLM-set timers (shared infra under shell, subagents, and future long-runners)
+[ ] engine/job-registry.ts: per-session Map<JobId, JobRecord>; survives across turns within a session; cleared on session end; subagent records ARE job records (shared shape)
+[ ] tools/shell.ts: background?: boolean input; when true, returns { jobId, pid, startedAt } immediately; stdout/stderr stream into job buffer with same MAX_OUTPUT_BYTES truncation; ctx.signal abort still cascades into killTree
+[ ] tools/job-status.ts: { jobId } -> { running, exitCode, stdout, stderr, durationMs }; non-mutating, auto-allowed
+[ ] tools/job-kill.ts: { jobId } -> killTree on the recorded child; mutating, prompts; doubles as cascade-kill for subagents
+[ ] engine/timer-registry.ts: per-session Map<TimerId, DeadlineTimer>; expired timers drained at top of each turn; pause/resume across compaction or user pause via existing src/deadline-timer.ts (the primitive landed in v1.1.x finally gets a caller)
+[ ] tools/set-timer.ts: { label, ms } -> { timerId }; LLM-callable so the model plans its own "ping if not done" checks; pairs naturally with shell({ background: true }) and the Agent tool
+[ ] tools/cancel-timer.ts: { timerId } -> ok; no permission prompt
+[ ] engine/loop.ts: pre-turn synthetic tool-result injection -- expired timers prepended to next model turn as { kind: "timer_fired", label, elapsedMs }; same plumbing reused for "subagent finished" payload delivery
+[ ] Subagent integration: Agent tool returns a jobId handle in the parent's registry so parent can timer-watch and kill; each subagent gets its own job + timer registry for its own backgrounded shells/timers; no cross-registry visibility (matches subagent isolation contract from Phase 12)
+[ ] Smoke test: LLM runs `npm install` backgrounded, sets 600s timer, timer fires before install completes, LLM calls job-status, sees still running, decides to kill
+[ ] Smoke test: parent spawns red-team subagent, sets 1800s "stuck-if-no-return" timer, subagent returns within budget, parent cancels timer
+
+Phase 14 (v1.2): subagent TUI -- tab cycle, panels, Ctrl+K kill prompt
+[ ] cli/agent-panel.tsx one card per slot with anguish meter, current action, designator (KT-4 style)
+[ ] cli/repl.tsx Tab/Shift+Tab cycles focus through main composer -> slot 1..4 -> main
+[ ] cli/repl.tsx Ctrl+K opens kill picker overlay with [1..4][esc] mapping to live slots
+[ ] Anguish band coloring (calm/alert/urgent/terminal) on the meter
+[ ] Spawn beyond 4 concurrent fails fast with explicit error rather than queuing
+[ ] Howl subscription wired into Ink for live panel updates
+[ ] Existing Ctrl+C semantics preserved (per project_keybindings memory): streaming -> abort, idle -> exit, prompt -> deny -- now also cascades into all living subagents
+[ ] Smoke test: spawn 3 subagents, Tab cycles through 4 panels, Ctrl+K then 2 kills slot 2 only
+
+Phase 15 (v1.2): external CLI agent providers -- shell-out adapters for third-party agent CLIs as subagent backends
+[ ] providers/external-cli.ts adapter interface: shell out with task as prompt, parse transcript into CanonicalResponse
+[ ] At least one concrete external-CLI adapter implementation, configured by user-supplied command + transcript-parse config rather than vendor-specific knowledge in this repo
+[ ] Subagent worktree isolation: each external CLI agent runs in its own git worktree under .squad/worktrees/<agent_id>/
+[ ] Result merging: orchestrator receives transcript plus worktree path, decides what to merge back
+[ ] Per-agent provider override in SubagentDef: provider field accepts a configured external-CLI provider id or a standard provider name
+[ ] Smoke test: red-team subagent backed by an external CLI returns issues, parent reviews worktree diff
+
+Phase 16 (v1.2): ship subagent layer -- built-ins, docs, tests, tag
+[ ] Built-in agent defs under src/agents/built-in/: explorer, judge, red-team, reviewer
+[ ] README section documenting .squad/agents/ format and per-agent model selection
+[ ] CHANGELOG entry via changelog-release-description skill
+[ ] v1.2.0 tag on local git repo
+[ ] End-to-end test: dispatch the same task across 3 different model backends concurrently, score by terminal anguish for vetting comparison
+
+Ship subagent layer: per-agent model selection working end-to-end with at least one external CLI provider configured, depth=1 enforced, Ctrl+K kill prompt verified, anguish meter rendering on a live panel
+[ ] Ship gate verified on a real multi-model vetting run

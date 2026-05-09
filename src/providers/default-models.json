@@ -89,19 +89,6 @@
       "base_url_env_var": "OPENAI_BASE_URL"
     },
     {
-      "id": "gpt-5.2-codex",
-      "provider_id": "openai",
-      "kind": "llm-response",
-      "base_url": "https://api.openai.com/v1",
-      "env_key_var": "OPENAI_API_KEY",
-      "capabilities": {
-        "tool_use": true,
-        "reasoning": true
-      },
-      "context_window": 400000,
-      "base_url_env_var": "OPENAI_BASE_URL"
-    },
-    {
       "id": "o1",
       "provider_id": "openai",
       "kind": "llm-response",

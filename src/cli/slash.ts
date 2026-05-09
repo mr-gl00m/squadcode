@@ -43,7 +43,7 @@ const HELP = [
   "/tools                list registered tools",
   "/sessions             list recent sessions in this directory",
   "/yolo                 toggle YOLO mode (sandbox + archive-on-delete + checklist; needs checklist.txt or CHECKLIST.md in cwd)",
-  "/skills               list loaded skills",
+  "/skills, /list-skills list loaded skills",
   "/<skill-name>         invoke a loaded skill (run /skills to see what's available)",
   "/output-style [name]  list output styles, or activate one (alias: /style; pass 'none' to clear)",
   "/resume               resume the most recent session (lands in Phase 4)",
@@ -149,6 +149,7 @@ export function handleSlash(line: string, ctx: SlashContext): SlashResult {
       if (err) return { message: `output style switch failed: ${err}` };
       return { message: `output style switched to ${arg}` };
     }
+    case "list-skills":
     case "skills": {
       const skills = ctx.skills();
       const list = Array.from(skills.values()).sort((a, b) =>
@@ -157,7 +158,7 @@ export function handleSlash(line: string, ctx: SlashContext): SlashResult {
       if (list.length === 0) {
         return {
           message:
-            "no skills loaded (looked in ~/.codex/skills, ~/.claude/skills, and ./.squad/skills)",
+            "no skills loaded (configure SQUAD_USER_SKILL_DIRS in .env or add skills under ./.squad/skills)",
           followup: { kind: "list-skills" },
         };
       }
@@ -166,12 +167,7 @@ export function handleSlash(line: string, ctx: SlashContext): SlashResult {
           s.description.length > 100
             ? s.description.slice(0, 97) + "..."
             : s.description;
-        const tag =
-          s.source === "project"
-            ? " (project)"
-            : s.source === "codex"
-              ? " (codex)"
-              : "";
+        const tag = s.source === "project" ? " (project)" : "";
         return `  /${s.name}${tag} — ${desc}`;
       });
       return {

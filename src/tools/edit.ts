@@ -8,6 +8,7 @@ import {
   normalizeToLf,
   restoreLineEnding,
 } from "../line-endings.js";
+import { detectOmissionPlaceholders } from "./omission-placeholder.js";
 import { resolveAndValidate } from "./path.js";
 import { defineTool } from "./types.js";
 
@@ -22,6 +23,29 @@ const MAX_EDIT_BYTES = 5_000_000;
 
 interface EditMetadata {
   mtimeMs: number;
+}
+
+// Refuse the edit when new_string introduces a shorthand placeholder that
+// would be written into the file as literal text. A placeholder also present
+// in old_string is allowed — the model is preserving an abbreviation that the
+// file legitimately contains, or the EDIT_NO_MATCH error will surface
+// naturally if it doesn't.
+export function checkEditPlaceholders(args: {
+  old_string: string;
+  new_string: string;
+}): { ok: true } | { ok: false; message: string } {
+  const newPh = detectOmissionPlaceholders(args.new_string);
+  if (newPh.length === 0) return { ok: true };
+  const oldPh = new Set(detectOmissionPlaceholders(args.old_string));
+  for (const ph of newPh) {
+    if (!oldPh.has(ph)) {
+      return {
+        ok: false,
+        message: `new_string contains an omission placeholder (e.g. '${ph}'); the placeholder would be written into the file as text. Provide literal replacement content.`,
+      };
+    }
+  }
+  return { ok: true };
 }
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -76,6 +100,13 @@ export const editTool = defineTool({
   defaultPermission: "ask",
   isReadOnly: false,
   preview: async (input, ctx) => {
+    const placeholderCheck = checkEditPlaceholders(input);
+    if (!placeholderCheck.ok) {
+      return {
+        display: `${input.path}\n  → ${placeholderCheck.message}`,
+        metadata: { mtimeMs: 0 },
+      };
+    }
     const target = await resolveAndValidate(input.path, {
       root: ctx.cwd,
       mustExist: true,
@@ -113,6 +144,14 @@ export const editTool = defineTool({
     };
   },
   execute: async (input, ctx, metadata) => {
+    const placeholderCheck = checkEditPlaceholders(input);
+    if (!placeholderCheck.ok) {
+      return {
+        ok: false,
+        content: placeholderCheck.message,
+        error: "EDIT_OMISSION_PLACEHOLDER",
+      };
+    }
     const target = await resolveAndValidate(input.path, {
       root: ctx.cwd,
       mustExist: true,

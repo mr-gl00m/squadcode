@@ -1,9 +1,10 @@
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { loadEnv } from "./env.js";
 import { logger } from "./logger.js";
 
-export type SkillSource = "codex" | "user" | "project";
+export type SkillSource = "user" | "project";
 
 export interface SkillEntry {
   name: string;
@@ -83,22 +84,42 @@ async function loadFromDir(
   return entries;
 }
 
+function expandHome(p: string): string {
+  if (p === "~") return homedir();
+  if (p.startsWith("~/") || p.startsWith("~\\")) {
+    return join(homedir(), p.slice(2));
+  }
+  return p;
+}
+
+export function getUserSkillDirs(): string[] {
+  const env = loadEnv();
+  const raw = env.SQUAD_USER_SKILL_DIRS?.trim();
+  if (!raw) {
+    return [join(homedir(), ".squad", "skills")];
+  }
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .map(expandHome);
+}
+
 export async function loadSkills(
   cwd: string,
 ): Promise<Map<string, SkillEntry>> {
-  const codexDir = join(homedir(), ".codex", "skills");
-  const userDir = join(homedir(), ".claude", "skills");
+  const userDirs = getUserSkillDirs();
   const projectDir = join(cwd, ".squad", "skills");
-  const [codexSkills, userSkills, projectSkills] = await Promise.all([
-    loadFromDir(codexDir, "codex"),
-    loadFromDir(userDir, "user"),
-    loadFromDir(projectDir, "project"),
-  ]);
-  // Precedence (later wins): codex < claude (~/.claude) < project (./.squad).
-  // Project skills override user skills override codex skills on name conflict.
+  const userResults = await Promise.all(
+    userDirs.map((d) => loadFromDir(d, "user")),
+  );
+  const projectSkills = await loadFromDir(projectDir, "project");
+  // Precedence (later wins): user dirs in order < project. Project skills
+  // override user skills on name conflict; later user dirs override earlier.
   const map = new Map<string, SkillEntry>();
-  for (const s of codexSkills) map.set(s.name.toLowerCase(), s);
-  for (const s of userSkills) map.set(s.name.toLowerCase(), s);
+  for (const skills of userResults) {
+    for (const s of skills) map.set(s.name.toLowerCase(), s);
+  }
   for (const s of projectSkills) map.set(s.name.toLowerCase(), s);
   return map;
 }

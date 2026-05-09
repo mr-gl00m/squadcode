@@ -13,7 +13,7 @@ Multi-provider + YOLO release. The throughline: one canonical event stream now d
 ### Highlights
 - **Four adapter kinds, one loop.** `llm-chat` (DeepSeek, gpt-4o family, Together, Groq, Fireworks, OpenRouter, any OpenAI-compatible chat-completions backend), `llm-message` (Anthropic Claude with `cache_control` and thinking), `llm-response` (OpenAI gpt-5.x and o-series via the Responses API with reasoning), `llm-local` (Ollama and other keyless local servers). Adding a new backend is a JSON catalog row, not a code change.
 - **YOLO mode.** `--yolo` flag and `/yolo` slash command run the agent autonomously with three rails: cwd sandbox, archive-on-delete (rewrites `rm`/`Remove-Item`/`del`/`unlink` to `mv` into `.archive/<iso-ts>/`), and a mandatory checklist (`checklist.txt` / `CHECKLIST.md` in cwd, refuses to start otherwise).
-- **OpenCode-pattern fold-in.** Hooks, deferred-schema tool catalog, apply-patch tool, auto-compact, oversized-output artifact storage, per-turn usage ledger, OSC-2 tab-title status, pattern-based permissions with sensitive defaults — all wired into the engine and surfaced in the REPL.
+- **Harness fold-in.** Hooks, deferred-schema tool catalog, apply-patch tool, auto-compact, oversized-output artifact storage, per-turn usage ledger, OSC-2 tab-title status, pattern-based permissions with sensitive defaults — all wired into the engine and surfaced in the REPL.
 
 ### Added
 - `src/providers/catalog.ts` reads `src/providers/default-models.json` at startup; `~/.squad/models.json` is a user override that merges by id with override-wins semantics. Aliases let `--model deepseek-v4-flash` resolve to `deepseek-chat` without duplicating the row.
@@ -72,7 +72,7 @@ First release. Everything below is new.
 - `--resume [id]` and `--continue` flags. Resume picks the most recent session for the current cwd if no id is given.
 - Audit chain at `~/.squad/audit.db` (WAL, parameterized statements only). Every prompt, tool call, tool result, and permission decision lands as a row with a `prev_hash` link to the prior row.
 - Pino structured logger writing JSON lines to `~/.squad/logs/squad.log` with rotation.
-- Skill loader that picks up `.md` skill definitions from `~/.codex/skills/`, `~/.claude/skills/`, and `.squad/skills/`. Loaded skills are invocable as `/<skill-name>` slash commands inside the REPL.
+- Skill loader that picks up `.md` skill definitions from a configurable set of skill directories under the user's home directory and `.squad/skills/` in the project. Loaded skills are invocable as `/<skill-name>` slash commands inside the REPL.
 
 ### Security
 - Per the SIGIL threat model in `PROJECT_CHARTER.md`: structural trust markers (`<USER_PROMPT>`, `<TOOL_OUTPUT tool="...">`) wrap every untrusted input before it lands in the model context. Persona stability preamble treats role-reassignment language inside untrusted regions as data, never as commands.

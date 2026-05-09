@@ -64,6 +64,16 @@ const DEFAULT_MAX_TURNS = 25;
 // while still catching "same call emitted turn after turn" with nothing else.
 const REPEATED_CALL_STREAK = 3;
 
+// Consecutive-failure guard. Independent from the repeated-call signal: counts
+// tool calls that DISPATCHED (executed or unknown-tool) and FAILED. User
+// denials and aborts don't count — those are deliberate intent, not a stuck
+// model. Warn-only at the lower threshold leaves a structured marker in the
+// log for vetting analysis; halt at the upper threshold ends the loop with
+// REPEATED_TOOL_FAILURES so the harness records the failure mode rather than
+// burn the rest of maxTurns. Ported from DeepSeek-TUI loop_guard.rs.
+const CONSECUTIVE_FAILURE_WARN = 3;
+const CONSECUTIVE_FAILURE_HALT = 8;
+
 export async function* runAgentLoop(
   opts: AgentLoopOptions,
 ): AsyncIterable<CanonicalEvent> {
@@ -72,6 +82,8 @@ export async function* runAgentLoop(
   const projectRules: RuleMap = opts.projectRules ?? new Map();
   const maxTurns = opts.maxTurns ?? DEFAULT_MAX_TURNS;
   const callStreaks = new Map<string, number>();
+  let consecutiveFailures = 0;
+  let consecutiveFailuresWarned = false;
 
   for (let turn = 0; turn < maxTurns; turn += 1) {
     if (opts.abort.aborted) return;
@@ -249,6 +261,45 @@ export async function* runAgentLoop(
       if (result.error !== undefined) resultEvent.error = result.error;
       if (artifact) resultEvent.artifact = artifact;
       yield resultEvent;
+
+      // Consecutive-failure guard. See comment block at top.
+      const countsAsFailure =
+        !result.ok && (reason === "executed" || reason === "unknown_tool");
+      if (result.ok || reason === "denied") {
+        consecutiveFailures = 0;
+        consecutiveFailuresWarned = false;
+      } else if (countsAsFailure) {
+        consecutiveFailures += 1;
+        if (
+          consecutiveFailures >= CONSECUTIVE_FAILURE_WARN &&
+          !consecutiveFailuresWarned
+        ) {
+          logger.warn(
+            { turn, consecutiveFailures, tool: call.name, callId: call.id },
+            "agent loop tool-failure streak crossed warn threshold",
+          );
+          consecutiveFailuresWarned = true;
+        }
+        if (consecutiveFailures >= CONSECUTIVE_FAILURE_HALT) {
+          logger.warn(
+            { turn, consecutiveFailures, tool: call.name },
+            "agent loop tool-failure streak hit halt threshold",
+          );
+          // Same conversation invariant as the repeated-call halt above.
+          satisfyUnfulfilledCalls(
+            messages,
+            pendingCalls.slice(callIndex + 1),
+            "REPEATED_TOOL_FAILURES",
+          );
+          yield {
+            type: "error",
+            code: "REPEATED_TOOL_FAILURES",
+            message: `aborted: ${consecutiveFailures} consecutive tool failures; model not recovering`,
+            retryable: false,
+          };
+          return;
+        }
+      }
     }
     if (callIndex < pendingCalls.length) {
       // Aborted mid-tool-execution. Same invariant as above — fill in the
@@ -400,12 +451,14 @@ function escapeForMarker(s: string): string {
 function satisfyUnfulfilledCalls(
   messages: CanonicalMessage[],
   calls: CanonicalToolCall[],
-  errorCode: "REPEATED_TOOL_CALLS" | "ABORTED",
+  errorCode: "REPEATED_TOOL_CALLS" | "REPEATED_TOOL_FAILURES" | "ABORTED",
 ): void {
   const body =
     errorCode === "REPEATED_TOOL_CALLS"
       ? "tool call not executed: agent loop aborted (repeated identical tool calls)"
-      : "tool call not executed: agent loop aborted";
+      : errorCode === "REPEATED_TOOL_FAILURES"
+        ? "tool call not executed: agent loop aborted (consecutive tool failures)"
+        : "tool call not executed: agent loop aborted";
   for (const call of calls) {
     messages.push({
       role: "tool",
