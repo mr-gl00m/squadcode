@@ -1,0 +1,171 @@
+{
+  "version": "1",
+  "models": [
+    {
+      "id": "deepseek-chat",
+      "provider_id": "deepseek",
+      "kind": "llm-chat",
+      "base_url": "https://api.deepseek.com",
+      "base_url_env_var": "DEEPSEEK_BASE_URL",
+      "env_key_var": "DEEPSEEK_API_KEY",
+      "capabilities": {
+        "tool_use": true,
+        "cache_control": true
+      },
+      "context_window": 128000,
+      "aliases": ["deepseek-v4-flash"]
+    },
+    {
+      "id": "deepseek-reasoner",
+      "provider_id": "deepseek",
+      "kind": "llm-chat",
+      "base_url": "https://api.deepseek.com",
+      "base_url_env_var": "DEEPSEEK_BASE_URL",
+      "env_key_var": "DEEPSEEK_API_KEY",
+      "capabilities": {
+        "tool_use": true,
+        "reasoning": true,
+        "cache_control": true
+      },
+      "context_window": 128000,
+      "aliases": ["deepseek-v4-pro"]
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "provider_id": "anthropic",
+      "kind": "llm-message",
+      "base_url": "https://api.anthropic.com",
+      "env_key_var": "ANTHROPIC_API_KEY",
+      "capabilities": {
+        "tool_use": true,
+        "thinking": true,
+        "cache_control": true
+      },
+      "context_window": 200000,
+      "base_url_env_var": "ANTHROPIC_BASE_URL"
+    },
+    {
+      "id": "claude-opus-4-7",
+      "provider_id": "anthropic",
+      "kind": "llm-message",
+      "base_url": "https://api.anthropic.com",
+      "env_key_var": "ANTHROPIC_API_KEY",
+      "capabilities": {
+        "tool_use": true,
+        "thinking": true,
+        "cache_control": true
+      },
+      "context_window": 200000,
+      "base_url_env_var": "ANTHROPIC_BASE_URL"
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "provider_id": "anthropic",
+      "kind": "llm-message",
+      "base_url": "https://api.anthropic.com",
+      "env_key_var": "ANTHROPIC_API_KEY",
+      "capabilities": {
+        "tool_use": true,
+        "cache_control": true
+      },
+      "context_window": 200000,
+      "base_url_env_var": "ANTHROPIC_BASE_URL"
+    },
+    {
+      "id": "gpt-5.1",
+      "provider_id": "openai",
+      "kind": "llm-response",
+      "base_url": "https://api.openai.com/v1",
+      "env_key_var": "OPENAI_API_KEY",
+      "capabilities": {
+        "tool_use": true,
+        "reasoning": true
+      },
+      "context_window": 400000,
+      "base_url_env_var": "OPENAI_BASE_URL"
+    },
+    {
+      "id": "o1",
+      "provider_id": "openai",
+      "kind": "llm-response",
+      "base_url": "https://api.openai.com/v1",
+      "env_key_var": "OPENAI_API_KEY",
+      "capabilities": {
+        "tool_use": true,
+        "reasoning": true
+      },
+      "context_window": 200000,
+      "base_url_env_var": "OPENAI_BASE_URL"
+    },
+    {
+      "id": "o3",
+      "provider_id": "openai",
+      "kind": "llm-response",
+      "base_url": "https://api.openai.com/v1",
+      "env_key_var": "OPENAI_API_KEY",
+      "capabilities": {
+        "tool_use": true,
+        "reasoning": true
+      },
+      "context_window": 200000,
+      "base_url_env_var": "OPENAI_BASE_URL"
+    },
+    {
+      "id": "gpt-4o",
+      "provider_id": "openai",
+      "kind": "llm-chat",
+      "base_url": "https://api.openai.com/v1",
+      "env_key_var": "OPENAI_API_KEY",
+      "capabilities": {
+        "tool_use": true
+      },
+      "context_window": 128000,
+      "base_url_env_var": "OPENAI_BASE_URL"
+    },
+    {
+      "id": "gpt-4o-mini",
+      "provider_id": "openai",
+      "kind": "llm-chat",
+      "base_url": "https://api.openai.com/v1",
+      "env_key_var": "OPENAI_API_KEY",
+      "capabilities": {
+        "tool_use": true
+      },
+      "context_window": 128000,
+      "base_url_env_var": "OPENAI_BASE_URL"
+    },
+    {
+      "id": "gpt-5.5",
+      "provider_id": "openai",
+      "kind": "llm-chat",
+      "base_url": "https://api.openai.com/v1",
+      "env_key_var": "OPENAI_API_KEY",
+      "capabilities": {
+        "tool_use": true
+      },
+      "context_window": 128000,
+      "base_url_env_var": "OPENAI_BASE_URL"
+    },
+    {
+      "id": "ollama-default",
+      "provider_id": "ollama",
+      "kind": "llm-local",
+      "base_url": "http://localhost:11434",
+      "base_url_env_var": "OLLAMA_BASE_URL",
+      "capabilities": {
+        "tool_use": true
+      },
+      "aliases": ["llama3.2", "llama3.1", "qwen2.5-coder", "qwen2.5-coder:32b"]
+    },
+    {
+      "id": "lemonade-default",
+      "provider_id": "lemonade",
+      "kind": "llm-local",
+      "base_url": "http://localhost:13305",
+      "base_url_env_var": "LEMONADE_BASE_URL",
+      "capabilities": {
+        "tool_use": true
+      }
+    }
+  ]
+}
