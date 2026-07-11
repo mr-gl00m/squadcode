@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 import {
   applyHunkToContent,
   applyPatchTool,
@@ -106,12 +106,7 @@ describe("parseUnifiedDiff", () => {
   });
 
   it("throws on a --- line not followed by a +++ line", () => {
-    const patch = [
-      "--- a/foo.txt",
-      "@@ -1 +1 @@",
-      "-x",
-      "+y",
-    ].join("\n");
+    const patch = ["--- a/foo.txt", "@@ -1 +1 @@", "-x", "+y"].join("\n");
     expect(() => parseUnifiedDiff(patch)).toThrow(/expected '\+\+\+ '/);
   });
 });
@@ -164,6 +159,13 @@ describe("ApplyPatch tool", () => {
     ].join("\n");
     const result = await applyPatchTool.execute({ patch }, ctx(dir));
     expect(result.ok).toBe(true);
+    expect(result.mutations).toEqual([
+      {
+        path,
+        before: "alpha\nbeta\ngamma\n",
+        after: "alpha\nBETA\ngamma\n",
+      },
+    ]);
     expect(await readFile(path, "utf-8")).toBe("alpha\nBETA\ngamma\n");
   });
 
@@ -198,9 +200,7 @@ describe("ApplyPatch tool", () => {
     ].join("\n");
     const result = await applyPatchTool.execute({ patch }, ctx(dir));
     expect(result.ok).toBe(true);
-    expect(await readFile(join(dir, "new.txt"), "utf-8")).toBe(
-      "hello\nworld",
-    );
+    expect(await readFile(join(dir, "new.txt"), "utf-8")).toBe("hello\nworld");
   });
 
   it("refuses to overwrite an existing file via new-file form", async () => {

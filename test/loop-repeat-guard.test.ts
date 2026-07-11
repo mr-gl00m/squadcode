@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { runAgentLoop } from "../src/engine/loop.js";
+import type { PolicyConfig } from "../src/permissions/policy.js";
 import type {
   CanonicalEvent,
   CanonicalRequest,
@@ -9,8 +11,6 @@ import type {
 } from "../src/providers/types.js";
 import type { ToolRegistry } from "../src/tools/registry.js";
 import type { Tool } from "../src/tools/types.js";
-import type { PolicyConfig } from "../src/permissions/policy.js";
-import { z } from "zod";
 
 // Each "turn" is a fixed list of tool calls the fake provider should emit.
 // An empty array signals "no tool calls" — the loop ends naturally.
@@ -24,7 +24,12 @@ function makeProvider(turns: ScriptedTurn[]): LLMProvider {
       const calls = turns[i] ?? [];
       i += 1;
       for (const call of calls) {
-        yield { type: "tool_call_done", id: call.id, name: call.name, args: call.args };
+        yield {
+          type: "tool_call_done",
+          id: call.id,
+          name: call.name,
+          args: call.args,
+        };
       }
       yield { type: "done", reason: calls.length > 0 ? "tool_use" : "stop" };
     },
@@ -84,7 +89,8 @@ async function collectErrors(
     abort: ctrl.signal,
     maxTurns: 20,
   })) {
-    if (ev.type === "error") errors.push({ code: ev.code, message: ev.message });
+    if (ev.type === "error")
+      errors.push({ code: ev.code, message: ev.message });
   }
   return errors;
 }

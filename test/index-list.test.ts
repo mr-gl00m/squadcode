@@ -69,10 +69,7 @@ describe("IndexList", () => {
 
   it("filters by tags (all must match)", async () => {
     const tool = createIndexListTool(MANIFEST);
-    const result = await tool.execute(
-      { tags: ["core", "context"] },
-      ctx(),
-    );
+    const result = await tool.execute({ tags: ["core", "context"] }, ctx());
     const body = JSON.parse(result.content);
     expect(body.returned).toBe(1);
     expect(body.entries[0].path).toBe("src/engine/auto-compact.ts");
@@ -87,6 +84,8 @@ describe("IndexList", () => {
 
   it("rejects unknown filter keys via zod", async () => {
     const tool = createIndexListTool(MANIFEST);
-    await expect(tool.execute({ tags: "not-an-array" }, ctx())).rejects.toThrow();
+    await expect(
+      tool.execute({ tags: "not-an-array" }, ctx()),
+    ).rejects.toThrow();
   });
 });

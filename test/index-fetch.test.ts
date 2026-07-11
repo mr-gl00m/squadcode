@@ -32,7 +32,11 @@ function fixtureManifest(): Manifest {
   };
 }
 
-async function writeFixture(cwd: string, rel: string, contents: string): Promise<void> {
+async function writeFixture(
+  cwd: string,
+  rel: string,
+  contents: string,
+): Promise<void> {
   const full = join(cwd, rel);
   await mkdir(dirname(full), { recursive: true });
   await writeFile(full, contents, "utf-8");

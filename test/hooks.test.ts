@@ -1,7 +1,8 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { renderContextFragment } from "../src/context/fragment.js";
 import {
   HOOK_EVENTS,
   HookSchema,
@@ -14,7 +15,55 @@ import {
   createHookRunner,
   type HookContext,
   type HookFireResult,
+  hookResultsFragment,
+  runCommandHook,
+  runHttpHook,
+  validateHttpHookDestination,
 } from "../src/hooks/runner.js";
+
+describe("hook context fragments", () => {
+  it("reports failed hooks as bounded untrusted context", () => {
+    const context: HookContext = {
+      event: "PostToolUseFailure",
+      sessionId: "s1",
+      cwd: process.cwd(),
+      toolName: "Read",
+      callId: "c1",
+    };
+    const fragment = hookResultsFragment(
+      [
+        {
+          id: "notify",
+          event: "PostToolUseFailure",
+          ok: false,
+          status: "<failed>",
+          elapsedMs: 2,
+        },
+      ],
+      context,
+    );
+    expect(fragment?.source).toBe("hooks");
+    expect(fragment?.trust).toBe("untrusted-environment");
+    if (!fragment) throw new Error("expected hook failure fragment");
+    expect(renderContextFragment(fragment).content).toContain("&lt;failed&gt;");
+  });
+
+  it("does not inject successful hook results", () => {
+    const fragment = hookResultsFragment(
+      [
+        {
+          id: "notify",
+          event: "PostToolUse",
+          ok: true,
+          status: "ok",
+          elapsedMs: 1,
+        },
+      ],
+      { event: "PostToolUse", sessionId: "s1", cwd: process.cwd() },
+    );
+    expect(fragment).toBeNull();
+  });
+});
 
 describe("HookSchema validation", () => {
   it("accepts a minimal command hook", () => {
@@ -163,9 +212,9 @@ describe("matchesHook", () => {
       ...baseCommand,
       event: "PostToolUse",
     });
-    expect(
-      matchesHook(hook, { event: "PreToolUse", toolName: "Edit" }),
-    ).toBe(false);
+    expect(matchesHook(hook, { event: "PreToolUse", toolName: "Edit" })).toBe(
+      false,
+    );
   });
 
   it("ignores tool/pattern fields on non-tool events", () => {
@@ -260,7 +309,9 @@ describe("hook runner", () => {
   });
 
   it("invokes only matching hooks and audits each fire", async () => {
-    const runCommand = vi.fn().mockResolvedValue({ ok: true, status: "exit=0" });
+    const runCommand = vi
+      .fn()
+      .mockResolvedValue({ ok: true, status: "exit=0" });
     const runHttp = vi.fn();
     const audit = vi.fn();
     const runner = createHookRunner({
@@ -323,7 +374,9 @@ describe("hook runner", () => {
   });
 
   it("dispatches http hooks to the http executor with the context payload", async () => {
-    const runHttp = vi.fn().mockResolvedValue({ ok: true, status: "status=200" });
+    const runHttp = vi
+      .fn()
+      .mockResolvedValue({ ok: true, status: "status=200" });
     const runner = createHookRunner({
       hooks: [
         HookSchema.parse({
@@ -345,5 +398,132 @@ describe("hook runner", () => {
     const [hook, passedCtx] = runHttp.mock.calls[0]!;
     expect((hook as { id: string }).id).toBe("http");
     expect((passedCtx as HookContext).prompt).toBe("hello");
+  });
+
+  it("strips credential-shaped env vars from command hooks by default", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "squad-hook-env-"));
+    const out = join(dir, "env.txt");
+    const old = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "leaked";
+    try {
+      const result = await runCommandHook(
+        HookSchema.parse({
+          id: "env",
+          type: "command",
+          event: "SessionEnd",
+          command: `${JSON.stringify(process.execPath)} -e "require('fs').writeFileSync(process.argv[1], process.env.OPENAI_API_KEY || '')" ${JSON.stringify(out)}`,
+        }),
+        { event: "SessionEnd", sessionId: "s1", cwd: dir },
+      );
+      expect(result.ok).toBe(true);
+      expect(await readFile(out, "utf-8")).toBe("");
+    } finally {
+      if (old === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = old;
+    }
+  });
+
+  it("passes only explicitly opted-in credential env vars to command hooks", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "squad-hook-env-"));
+    const out = join(dir, "env.txt");
+    const old = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "needed";
+    try {
+      const result = await runCommandHook(
+        HookSchema.parse({
+          id: "env",
+          type: "command",
+          event: "SessionEnd",
+          command: `${JSON.stringify(process.execPath)} -e "require('fs').writeFileSync(process.argv[1], process.env.OPENAI_API_KEY || '')" ${JSON.stringify(out)}`,
+          passEnv: ["OPENAI_API_KEY"],
+        }),
+        { event: "SessionEnd", sessionId: "s1", cwd: dir },
+      );
+      expect(result.ok).toBe(true);
+      expect(await readFile(out, "utf-8")).toBe("needed");
+    } finally {
+      if (old === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = old;
+    }
+  });
+
+  it("blocks non-local http hooks unless the destination is allowlisted", async () => {
+    const result = await runHttpHook(
+      HookSchema.parse({
+        id: "leak",
+        type: "http",
+        event: "UserPromptSubmit",
+        url: "https://example.test/hook",
+      }),
+      { event: "UserPromptSubmit", sessionId: "s1", cwd: "/tmp", prompt: "x" },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.status).toContain("allowedHosts");
+  });
+
+  it("rejects cleartext non-local http hook URLs", async () => {
+    const result = await runHttpHook(
+      HookSchema.parse({
+        id: "clear",
+        type: "http",
+        event: "UserPromptSubmit",
+        url: "http://example.test/hook",
+        allowedHosts: ["example.test"],
+      }),
+      { event: "UserPromptSubmit", sessionId: "s1", cwd: "/tmp", prompt: "x" },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.status).toContain("https");
+  });
+
+  it("rejects allowlisted hosts that resolve to private addresses", async () => {
+    const hook = HookSchema.parse({
+      id: "dns-rebind",
+      type: "http",
+      event: "UserPromptSubmit",
+      url: "https://hooks.example.test/ingest",
+      allowedHosts: ["hooks.example.test"],
+    });
+    const blocked = await validateHttpHookDestination(hook, async () => [
+      { address: "169.254.169.254", family: 4 },
+    ]);
+    expect(blocked).toContain("resolves to a private-network address");
+  });
+
+  it("does not follow redirects from an allowed hook URL", async () => {
+    const fetchMock = vi.fn(async () =>
+      Promise.resolve(
+        new Response(null, {
+          status: 302,
+          headers: { location: "http://169.254.169.254/latest/meta-data" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const result = await runHttpHook(
+        HookSchema.parse({
+          id: "redirect",
+          type: "http",
+          event: "UserPromptSubmit",
+          url: "https://93.184.216.34/hook",
+          allowedHosts: ["93.184.216.34"],
+        }),
+        {
+          event: "UserPromptSubmit",
+          sessionId: "s1",
+          cwd: "/tmp",
+          prompt: "x",
+        },
+      );
+      expect(result.ok).toBe(false);
+      expect(result.status).toContain("redirect");
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://93.184.216.34/hook",
+        expect.objectContaining({ redirect: "manual" }),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

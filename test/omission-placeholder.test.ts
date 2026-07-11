@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { editTool, checkEditPlaceholders } from "../src/tools/edit.js";
+import { checkEditPlaceholders, editTool } from "../src/tools/edit.js";
 import { detectOmissionPlaceholders } from "../src/tools/omission-placeholder.js";
 import { writeTool } from "../src/tools/write.js";
 
@@ -72,25 +72,29 @@ function bar() {
   });
 
   it("collapses internal whitespace before prefix lookup", () => {
-    expect(detectOmissionPlaceholders("//   rest    of    methods   ..."))
-      .toEqual(["rest of methods ..."]);
+    expect(
+      detectOmissionPlaceholders("//   rest    of    methods   ..."),
+    ).toEqual(["rest of methods ..."]);
   });
 
   it("normalizes \\r\\n line endings", () => {
-    expect(detectOmissionPlaceholders("// rest of methods ...\r\nfoo"))
-      .toEqual(["rest of methods ..."]);
+    expect(detectOmissionPlaceholders("// rest of methods ...\r\nfoo")).toEqual(
+      ["rest of methods ..."],
+    );
   });
 
   it("returns [] for plain text", () => {
-    expect(detectOmissionPlaceholders("export function foo() { return 1; }"))
-      .toEqual([]);
+    expect(
+      detectOmissionPlaceholders("export function foo() { return 1; }"),
+    ).toEqual([]);
   });
 });
 
 describe("checkEditPlaceholders", () => {
   it("passes when neither half has a placeholder", () => {
-    expect(checkEditPlaceholders({ old_string: "foo", new_string: "bar" }))
-      .toEqual({ ok: true });
+    expect(
+      checkEditPlaceholders({ old_string: "foo", new_string: "bar" }),
+    ).toEqual({ ok: true });
   });
 
   it("allows an old_string-only placeholder", () => {
@@ -143,7 +147,11 @@ describe("Edit tool preview surfaces placeholder rejection", () => {
   it("preview returns a placeholder-aware display before file I/O", async () => {
     // No file exists at scratch/missing.ts; if preview did file I/O before
     // the placeholder check, this would throw a path-not-found error.
-    const ctx = { cwd: scratch, signal: new AbortController().signal, callId: "t" };
+    const ctx = {
+      cwd: scratch,
+      signal: new AbortController().signal,
+      callId: "t",
+    };
     const result = await editTool.preview!(
       {
         path: "missing.ts",
@@ -161,7 +169,11 @@ describe("Edit tool refuses placeholders end-to-end", () => {
   it("returns EDIT_OMISSION_PLACEHOLDER when new_string has a placeholder", async () => {
     const file = join(scratch, "f.ts");
     writeFileSync(file, "function a() { return 1; }\n", "utf-8");
-    const ctx = { cwd: scratch, signal: new AbortController().signal, callId: "t" };
+    const ctx = {
+      cwd: scratch,
+      signal: new AbortController().signal,
+      callId: "t",
+    };
     const result = await editTool.execute(
       {
         path: "f.ts",
@@ -177,7 +189,11 @@ describe("Edit tool refuses placeholders end-to-end", () => {
   });
 
   it("refuses on placeholder before path resolution would fail", async () => {
-    const ctx = { cwd: scratch, signal: new AbortController().signal, callId: "t" };
+    const ctx = {
+      cwd: scratch,
+      signal: new AbortController().signal,
+      callId: "t",
+    };
     const result = await editTool.execute(
       {
         path: "missing.ts",
@@ -195,7 +211,11 @@ describe("Edit tool refuses placeholders end-to-end", () => {
 
 describe("Write tool refuses placeholders end-to-end", () => {
   it("returns WRITE_OMISSION_PLACEHOLDER when content has a placeholder", async () => {
-    const ctx = { cwd: scratch, signal: new AbortController().signal, callId: "t" };
+    const ctx = {
+      cwd: scratch,
+      signal: new AbortController().signal,
+      callId: "t",
+    };
     const result = await writeTool.execute(
       {
         path: "out.ts",
@@ -216,7 +236,11 @@ describe("Write tool refuses placeholders end-to-end", () => {
   });
 
   it("writes normally when content is literal", async () => {
-    const ctx = { cwd: scratch, signal: new AbortController().signal, callId: "t" };
+    const ctx = {
+      cwd: scratch,
+      signal: new AbortController().signal,
+      callId: "t",
+    };
     const result = await writeTool.execute(
       {
         path: "out.ts",

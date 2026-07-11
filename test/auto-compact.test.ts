@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   AUTO_COMPACT_THRESHOLD,
   DEFAULT_TAIL_TURNS,
-  STRUCTURED_SUMMARIZER_PROMPT,
   findTailStart,
+  STRUCTURED_SUMMARIZER_PROMPT,
   shouldAutoCompact,
 } from "../src/engine/auto-compact.js";
 
@@ -21,14 +21,16 @@ describe("shouldAutoCompact", () => {
     const ctx = 100_000;
     expect(shouldAutoCompact(0, ctx)).toBe(false);
     expect(shouldAutoCompact(50_000, ctx)).toBe(false);
-    expect(shouldAutoCompact(Math.floor(ctx * AUTO_COMPACT_THRESHOLD) - 1, ctx))
-      .toBe(false);
+    expect(
+      shouldAutoCompact(Math.floor(ctx * AUTO_COMPACT_THRESHOLD) - 1, ctx),
+    ).toBe(false);
   });
 
   it("returns true at or above the threshold", () => {
     const ctx = 100_000;
-    expect(shouldAutoCompact(Math.ceil(ctx * AUTO_COMPACT_THRESHOLD), ctx))
-      .toBe(true);
+    expect(
+      shouldAutoCompact(Math.ceil(ctx * AUTO_COMPACT_THRESHOLD), ctx),
+    ).toBe(true);
     expect(shouldAutoCompact(ctx, ctx)).toBe(true);
     expect(shouldAutoCompact(ctx + 1, ctx)).toBe(true);
   });
@@ -87,7 +89,9 @@ describe("findTailStart", () => {
 describe("STRUCTURED_SUMMARIZER_PROMPT", () => {
   it("includes the prescribed section headings", () => {
     expect(STRUCTURED_SUMMARIZER_PROMPT).toContain("## Goal");
-    expect(STRUCTURED_SUMMARIZER_PROMPT).toContain("## Constraints & Preferences");
+    expect(STRUCTURED_SUMMARIZER_PROMPT).toContain(
+      "## Constraints & Preferences",
+    );
     expect(STRUCTURED_SUMMARIZER_PROMPT).toContain("## Progress");
     expect(STRUCTURED_SUMMARIZER_PROMPT).toContain("### Done");
     expect(STRUCTURED_SUMMARIZER_PROMPT).toContain("### In Progress");

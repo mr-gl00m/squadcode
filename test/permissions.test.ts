@@ -1,9 +1,12 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   bashArityPrefix,
   compilePattern,
   deriveScopePattern,
+  deriveScopePatterns,
   extractMatchKey,
+  extractMatchKeys,
   specificity,
 } from "../src/permissions/match.js";
 import {
@@ -119,15 +122,11 @@ describe("extractMatchKey and deriveScopePattern", () => {
     expect(deriveScopePattern("Read", { path: "src/foo/bar.ts" })).toBe(
       "src/foo/*",
     );
-    expect(deriveScopePattern("Edit", { path: "src/foo.ts" })).toBe(
-      "src/*",
-    );
+    expect(deriveScopePattern("Edit", { path: "src/foo.ts" })).toBe("src/*");
   });
 
   it("keeps repo-root files as literal paths so [A]/[P] doesn't widen to '*'", () => {
-    expect(deriveScopePattern("Read", { path: "README.md" })).toBe(
-      "README.md",
-    );
+    expect(deriveScopePattern("Read", { path: "README.md" })).toBe("README.md");
   });
 
   it("derives scope pattern via arity for Shell", () => {
@@ -139,6 +138,36 @@ describe("extractMatchKey and deriveScopePattern", () => {
   it("derives * as fallback for tools with no match key", () => {
     expect(deriveScopePattern("TodoWrite", { todos: [] })).toBe("*");
   });
+
+  it("derives one exact approval key per file in an ApplyPatch", () => {
+    const args = {
+      patch: [
+        "--- a/src/a.ts",
+        "+++ b/src/a.ts",
+        "@@ -1 +1 @@",
+        "-a",
+        "+A",
+        "--- /dev/null",
+        "+++ b/src/b.ts",
+        "@@ -0,0 +1 @@",
+        "+b",
+      ].join("\n"),
+    };
+    expect(extractMatchKeys("ApplyPatch", args)).toEqual([
+      { kind: "path", key: "src/a.ts" },
+      { kind: "path", key: "src/b.ts" },
+    ]);
+    expect(deriveScopePatterns("ApplyPatch", args)).toEqual([
+      "src/a.ts",
+      "src/b.ts",
+    ]);
+  });
+
+  it("keeps malformed ApplyPatch approval narrower than wildcard", () => {
+    expect(
+      deriveScopePatterns("ApplyPatch", { patch: "--- a/no-plus" }),
+    ).toEqual(["<invalid-apply-patch>"]);
+  });
 });
 
 describe("decideAction with patterns", () => {
@@ -146,6 +175,7 @@ describe("decideAction with patterns", () => {
     defaultMode: "ask" as const,
     rules: new Map(),
     dangerouslySkipPermissions: false,
+    mode: "act" as const,
   };
 
   it("dangerouslySkipPermissions short-circuits to allow", () => {
@@ -163,27 +193,31 @@ describe("decideAction with patterns", () => {
     const rules = new Map();
     appendRule(rules, "Shell", { pattern: "*", action: "ask" });
     appendRule(rules, "Shell", { pattern: "git status *", action: "allow" });
-    rules.get("Shell")!.sort(
-      (a: { pattern: string }, b: { pattern: string }) =>
-        specificity(b.pattern) - specificity(a.pattern),
-    );
+    rules
+      .get("Shell")!
+      .sort(
+        (a: { pattern: string }, b: { pattern: string }) =>
+          specificity(b.pattern) - specificity(a.pattern),
+      );
     const cfg = { ...baseCfg, rules };
     expect(
       decideAction("Shell", "ask", { command: "git status -u" }, cfg),
     ).toBe("allow");
-    expect(
-      decideAction("Shell", "ask", { command: "rm -rf /" }, cfg),
-    ).toBe("ask");
+    expect(decideAction("Shell", "ask", { command: "rm -rf /" }, cfg)).toBe(
+      "ask",
+    );
   });
 
   it("longer pattern wins over shorter when both match", () => {
     const rules = new Map();
     appendRule(rules, "Read", { pattern: "**/.env", action: "ask" });
     appendRule(rules, "Read", { pattern: "**/.env.example", action: "allow" });
-    rules.get("Read")!.sort(
-      (a: { pattern: string }, b: { pattern: string }) =>
-        specificity(b.pattern) - specificity(a.pattern),
-    );
+    rules
+      .get("Read")!
+      .sort(
+        (a: { pattern: string }, b: { pattern: string }) =>
+          specificity(b.pattern) - specificity(a.pattern),
+      );
     const cfg = { ...baseCfg, rules };
     expect(decideAction("Read", "ask", { path: ".env.example" }, cfg)).toBe(
       "allow",
@@ -208,6 +242,39 @@ describe("decideAction with patterns", () => {
       ),
     ).toBe("deny");
   });
+
+  it("requires every ApplyPatch file key to match within one rule layer", () => {
+    const session: RuleMap = new Map();
+    appendRule(session, "ApplyPatch", { pattern: "src/a.ts", action: "allow" });
+    appendRule(session, "ApplyPatch", { pattern: "src/b.ts", action: "allow" });
+    const patch = (paths: string[]) => ({
+      patch: paths
+        .map((path) => `--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n+content`)
+        .join("\n"),
+    });
+    const cfg = { ...baseCfg, rules: session, layers: [session] };
+
+    expect(
+      decideAction("ApplyPatch", "ask", patch(["src/a.ts", "src/b.ts"]), cfg),
+    ).toBe("allow");
+    expect(
+      decideAction("ApplyPatch", "ask", patch(["src/b.ts", "src/c.ts"]), cfg),
+    ).toBe("ask");
+
+    const mixed: RuleMap = new Map();
+    appendRule(mixed, "ApplyPatch", {
+      pattern: "src/c.ts",
+      action: "deny",
+    });
+    expect(
+      decideAction(
+        "ApplyPatch",
+        "ask",
+        patch(["src/unmatched.ts", "src/c.ts"]),
+        { ...baseCfg, rules: mixed, layers: [mixed] },
+      ),
+    ).toBe("deny");
+  });
 });
 
 describe("buildPolicyFromCli", () => {
@@ -216,12 +283,16 @@ describe("buildPolicyFromCli", () => {
       defaultMode: "ask",
       allowedTools: "Read,Glob",
     });
-    expect(cfg.rules.get("Read")?.some(
-      (r) => r.pattern === "*" && r.action === "allow",
-    )).toBe(true);
-    expect(cfg.rules.get("Glob")?.some(
-      (r) => r.pattern === "*" && r.action === "allow",
-    )).toBe(true);
+    expect(
+      cfg.rules
+        .get("Read")
+        ?.some((r) => r.pattern === "*" && r.action === "allow"),
+    ).toBe(true);
+    expect(
+      cfg.rules
+        .get("Glob")
+        ?.some((r) => r.pattern === "*" && r.action === "allow"),
+    ).toBe(true);
   });
 
   it("converts disallowedTools list into per-tool wildcard-deny rules", () => {
@@ -230,8 +301,9 @@ describe("buildPolicyFromCli", () => {
       disallowedTools: "Shell",
     });
     const shellRules = cfg.rules.get("Shell") ?? [];
-    expect(shellRules.some((r) => r.pattern === "*" && r.action === "deny"))
-      .toBe(true);
+    expect(
+      shellRules.some((r) => r.pattern === "*" && r.action === "deny"),
+    ).toBe(true);
   });
 
   it("bakes in sensitive-file defaults under Read/Edit/Write", () => {
@@ -245,9 +317,9 @@ describe("buildPolicyFromCli", () => {
     expect(decideAction("Read", "auto-allow", { path: "/x/id_rsa" }, cfg)).toBe(
       "deny",
     );
-    expect(
-      decideAction("Edit", "ask", { path: "/x/.ssh/config" }, cfg),
-    ).toBe("deny");
+    expect(decideAction("Edit", "ask", { path: "/x/.ssh/config" }, cfg)).toBe(
+      "deny",
+    );
   });
 });
 
@@ -270,5 +342,61 @@ describe("mergeRules", () => {
     appendRule(b, "Read", { pattern: "**/.env", action: "ask" });
     const merged = mergeRules(a, b);
     expect(merged.get("Read")?.length).toBe(2);
+  });
+});
+
+describe("dangerouslySkipReadPermissions (in-project read skip)", () => {
+  const cwd = process.cwd();
+  const cfg = buildPolicyFromCli({
+    defaultMode: "ask",
+    dangerouslySkipReadPermissions: true,
+    cwd,
+  });
+
+  it("auto-allows in-project reads that would otherwise ask (.env)", () => {
+    expect(decideAction("Read", "auto-allow", { path: ".env" }, cfg)).toBe(
+      "allow",
+    );
+    expect(
+      decideAction(
+        "Read",
+        "auto-allow",
+        { path: resolve(cwd, "config", ".env") },
+        cfg,
+      ),
+    ).toBe("allow");
+  });
+
+  it("does not skip reads outside the project directory", () => {
+    // Out-of-project .env keeps its sensitive 'ask'; an out-of-project key
+    // keeps its 'deny'. The flag is scoped to cwd, so neither is bypassed.
+    expect(
+      decideAction(
+        "Read",
+        "auto-allow",
+        { path: resolve(cwd, "..", ".env") },
+        cfg,
+      ),
+    ).toBe("ask");
+    expect(
+      decideAction(
+        "Read",
+        "auto-allow",
+        { path: resolve(cwd, "..", "id_rsa") },
+        cfg,
+      ),
+    ).toBe("deny");
+  });
+
+  it("leaves mutating tools on the normal policy (read-only flag)", () => {
+    // Editing an in-project .env still asks — the flag never relaxes writes.
+    expect(decideAction("Edit", "ask", { path: ".env" }, cfg)).toBe("ask");
+  });
+
+  it("is a no-op when the flag is off", () => {
+    const off = buildPolicyFromCli({ defaultMode: "ask", cwd });
+    expect(decideAction("Read", "auto-allow", { path: ".env" }, off)).toBe(
+      "ask",
+    );
   });
 });

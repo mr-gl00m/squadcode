@@ -82,7 +82,9 @@ describe("toAnthropicMessages", () => {
         {
           role: "assistant",
           content: "I'll look",
-          toolCalls: [{ id: "call_1", name: "Glob", args: { pattern: "*.ts" } }],
+          toolCalls: [
+            { id: "call_1", name: "Glob", args: { pattern: "*.ts" } },
+          ],
         },
       ],
     };

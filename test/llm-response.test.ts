@@ -16,9 +16,7 @@ describe("toResponseInput", () => {
     };
     const { instructions, input } = toResponseInput(req);
     expect(instructions).toBe("be helpful");
-    expect(input).toEqual([
-      { role: "user", content: "hi", type: "message" },
-    ]);
+    expect(input).toEqual([{ role: "user", content: "hi", type: "message" }]);
   });
 
   it("concatenates req.system with system messages", () => {

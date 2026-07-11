@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { runAgentLoop } from "../src/engine/loop.js";
+import type { PolicyConfig } from "../src/permissions/policy.js";
 import type {
   CanonicalEvent,
   CanonicalRequest,
@@ -9,8 +11,6 @@ import type {
 } from "../src/providers/types.js";
 import type { ToolRegistry } from "../src/tools/registry.js";
 import type { Tool } from "../src/tools/types.js";
-import type { PolicyConfig } from "../src/permissions/policy.js";
-import { z } from "zod";
 
 type ScriptedTurn = CanonicalToolCall[];
 
@@ -22,7 +22,12 @@ function makeProvider(turns: ScriptedTurn[]): LLMProvider {
       const calls = turns[i] ?? [];
       i += 1;
       for (const call of calls) {
-        yield { type: "tool_call_done", id: call.id, name: call.name, args: call.args };
+        yield {
+          type: "tool_call_done",
+          id: call.id,
+          name: call.name,
+          args: call.args,
+        };
       }
       yield { type: "done", reason: calls.length > 0 ? "tool_use" : "stop" };
     },
@@ -91,7 +96,8 @@ async function collectErrors(
     abort: ctrl.signal,
     maxTurns: 50,
   })) {
-    if (ev.type === "error") errors.push({ code: ev.code, message: ev.message });
+    if (ev.type === "error")
+      errors.push({ code: ev.code, message: ev.message });
   }
   return errors;
 }
@@ -99,12 +105,20 @@ async function collectErrors(
 let counter = 0;
 function failCall(): CanonicalToolCall {
   counter += 1;
-  return { id: `fail-${counter}`, name: "dual", args: { kind: "fail", seq: counter } };
+  return {
+    id: `fail-${counter}`,
+    name: "dual",
+    args: { kind: "fail", seq: counter },
+  };
 }
 
 function okCall(): CanonicalToolCall {
   counter += 1;
-  return { id: `ok-${counter}`, name: "dual", args: { kind: "ok", seq: counter } };
+  return {
+    id: `ok-${counter}`,
+    name: "dual",
+    args: { kind: "ok", seq: counter },
+  };
 }
 
 function unknownToolCall(): CanonicalToolCall {

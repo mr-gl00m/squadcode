@@ -1,13 +1,13 @@
-import { describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { handleSlash, type SlashContext } from "../src/cli/slash.js";
 import {
   composeSystemPrompt,
   loadOutputStyles,
   type OutputStyle,
 } from "../src/output-styles.js";
-import { handleSlash, type SlashContext } from "../src/cli/slash.js";
 
 async function makeTempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "squad-style-"));

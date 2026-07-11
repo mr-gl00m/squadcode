@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   loadCatalog,
-  resolveEntry,
   type ModelEntry,
+  resolveEntry,
 } from "../src/providers/catalog.js";
 
 let scratch: string;
@@ -87,7 +87,12 @@ describe("loadCatalog", () => {
       },
     ]);
     const cat = loadCatalog({ defaultPath, userPath });
-    expect(cat.list().map((e) => e.id).sort()).toEqual(["a", "b"]);
+    expect(
+      cat
+        .list()
+        .map((e) => e.id)
+        .sort(),
+    ).toEqual(["a", "b"]);
   });
 
   it("ignores a malformed user override but keeps defaults", () => {
@@ -159,7 +164,9 @@ describe("loadCatalog", () => {
         },
       ],
     });
-    expect(cat.get("deepseek-chat")?.base_url).toBe("https://test-extra.example");
+    expect(cat.get("deepseek-chat")?.base_url).toBe(
+      "https://test-extra.example",
+    );
   });
 });
 

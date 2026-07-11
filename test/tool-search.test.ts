@@ -5,8 +5,8 @@ import {
   createToolSearchTool,
   parseSelectQuery,
   scoreMatch,
-  tokenize,
   type ToolSearchRegistryView,
+  tokenize,
 } from "../src/tools/tool-search.js";
 import type { ToolContext } from "../src/tools/types.js";
 
@@ -19,14 +19,22 @@ function ctx(): ToolContext {
 }
 
 function makeView(opts: {
-  entries: Array<{ name: string; description: string; inputSchema?: Record<string, unknown> }>;
+  entries: Array<{
+    name: string;
+    description: string;
+    inputSchema?: Record<string, unknown>;
+  }>;
   loaded?: Set<string>;
 }): { view: ToolSearchRegistryView; loaded: Set<string> } {
   const loaded = opts.loaded ?? new Set<string>();
   const entries = opts.entries.map((e) => ({
     name: e.name,
     description: e.description,
-    inputSchema: e.inputSchema ?? { type: "object", properties: {}, required: [] },
+    inputSchema: e.inputSchema ?? {
+      type: "object",
+      properties: {},
+      required: [],
+    },
   }));
   const view: ToolSearchRegistryView = {
     deferredEntries: () => entries,
@@ -47,20 +55,37 @@ describe("registry deferral", () => {
     expect(eager).toContain("Read");
     expect(eager).toContain("ToolSearch");
     expect(eager).not.toContain("ApplyPatch");
-    expect(catalog).toEqual(["ApplyPatch"]);
+    // ApplyPatch plus the v1.3 job/timer tools are deferred to keep the eager
+    // catalog small for local models.
+    expect(catalog).toEqual([
+      "ApplyPatch",
+      "SetTimer",
+      "CancelTimer",
+      "JobStatus",
+      "JobKill",
+    ]);
+    for (const name of ["SetTimer", "CancelTimer", "JobStatus", "JobKill"]) {
+      expect(eager).not.toContain(name);
+    }
   });
 
   it("ToolSearch itself is always eager (never deferred)", () => {
     const reg = createToolRegistry();
-    expect(reg.deferredCatalog().some((e) => e.name === "ToolSearch")).toBe(false);
+    expect(reg.deferredCatalog().some((e) => e.name === "ToolSearch")).toBe(
+      false,
+    );
   });
 
   it("markLoaded promotes a deferred tool into toCanonicalSpecs", () => {
     const reg = createToolRegistry();
-    expect(reg.toCanonicalSpecs().some((t) => t.name === "ApplyPatch")).toBe(false);
+    expect(reg.toCanonicalSpecs().some((t) => t.name === "ApplyPatch")).toBe(
+      false,
+    );
     expect(reg.markLoaded("ApplyPatch")).toBe(true);
     expect(reg.isLoaded("ApplyPatch")).toBe(true);
-    expect(reg.toCanonicalSpecs().some((t) => t.name === "ApplyPatch")).toBe(true);
+    expect(reg.toCanonicalSpecs().some((t) => t.name === "ApplyPatch")).toBe(
+      true,
+    );
   });
 
   it("markLoaded refuses unknown or eager tools", () => {
@@ -172,10 +197,15 @@ describe("ToolSearch execute", () => {
 
   it("returns a no-match notice when keywords miss everything", async () => {
     const { view, loaded } = makeView({
-      entries: [{ name: "ApplyPatch", description: "Apply a unified-diff patch" }],
+      entries: [
+        { name: "ApplyPatch", description: "Apply a unified-diff patch" },
+      ],
     });
     const tool = createToolSearchTool(view);
-    const result = await tool.execute({ query: "completely irrelevant" }, ctx());
+    const result = await tool.execute(
+      { query: "completely irrelevant" },
+      ctx(),
+    );
     expect(result.ok).toBe(true);
     expect(loaded.size).toBe(0);
     expect(result.content).toContain("No deferred tools matched");

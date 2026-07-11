@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 import { detectAndStripBom, restoreBom } from "../src/bom.js";
 import { withFileLock } from "../src/file-mutex.js";
 import {
@@ -120,6 +120,13 @@ describe("edit tool hardening", () => {
       ctx(dir),
     );
     expect(result.ok).toBe(true);
+    expect(result.mutations).toEqual([
+      {
+        path,
+        before: "alpha\r\nbeta\r\ngamma\r\n",
+        after: "alpha\r\nBETA\r\ngamma\r\n",
+      },
+    ]);
     const after = await readFile(path, "utf-8");
     expect(after).toBe("alpha\r\nBETA\r\ngamma\r\n");
   });
@@ -200,8 +207,9 @@ describe("edit diff preview helper", () => {
       at: 0,
       replaceAll: true,
     });
-    expect(out.startsWith("f.txt:1  (replace_all — 3 matches; first shown)\n"))
-      .toBe(true);
+    expect(
+      out.startsWith("f.txt:1  (replace_all — 3 matches; first shown)\n"),
+    ).toBe(true);
     expect(out.endsWith("- x\n+ y")).toBe(true);
   });
 
@@ -263,6 +271,42 @@ describe("edit tool preview()", () => {
 });
 
 describe("edit stale-mtime check", () => {
+  it("checks mtime only after acquiring the file mutex", async () => {
+    const dir = await makeTempDir();
+    const path = join(dir, "queued-race.txt");
+    const args = { path, old_string: "beta", new_string: "BETA" };
+    await writeFile(path, "alpha\nbeta\n", "utf-8");
+    const previewEdit = editTool.preview;
+    if (!previewEdit) throw new Error("Edit preview is unavailable");
+    const preview = await previewEdit(args, ctx(dir));
+
+    let releaseLock: (() => void) | undefined;
+    let markEntered: (() => void) | undefined;
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const blocker = withFileLock(path, async () => {
+      markEntered?.();
+      await release;
+    });
+    await entered;
+
+    const execution = editTool.execute(args, ctx(dir), preview.metadata);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await writeFile(path, "alpha\nbeta\nexternal\n", "utf-8");
+    const future = new Date(Date.now() + 2_000);
+    await utimes(path, future, future);
+    releaseLock?.();
+    await blocker;
+
+    const result = await execution;
+    expect(result.error).toBe("EDIT_STALE_MTIME");
+    expect(await readFile(path, "utf-8")).toContain("external");
+  });
+
   it("rejects when the file mtime moved between preview and execute", async () => {
     const dir = await makeTempDir();
     const path = join(dir, "race.txt");

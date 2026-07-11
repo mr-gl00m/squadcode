@@ -1,0 +1,52 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Ink regression snapshots > pins the agent panel 1`] = `
+"╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ KT-4 red-team · deepseek/deepseek-v4-pro · running                                               │
+│ ▶ Shell npm test                                                                                 │
+│ anguish ███████░░░ urgent                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ slot 2 · empty                                                                                   │
+│ idle                                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ slot 3 · empty                                                                                   │
+│ idle                                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ slot 4 · empty                                                                                   │
+│ idle                                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+`;
+
+exports[`Ink regression snapshots > pins the backtrack overlay 1`] = `
+"╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Backtrack                                                                                        │
+│   1. inspect the project                                                                         │
+│ › 2. implement the fix                                                                           │
+│ ↑/↓ select · Enter restore · Esc cancel                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+`;
+
+exports[`Ink regression snapshots > pins the kill picker 1`] = `
+"╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Kill which subagent? (esc to cancel)                                                             │
+│ [1] KT-4 red-team                                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+`;
+
+exports[`Ink regression snapshots > pins the permission overlay 1`] = `
+"╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ permission required: Shell                                                                       │
+│ npm test                                                                                         │
+│ advisory: guardian llama3.2 [caution]: Confirm the command is scoped to this repository.         │
+│ [y]es allow once [a]lways for this session [p]ermanently for this project [u]ser-wide [n]o       │
+│ (default)                                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
+`;
+
+exports[`Ink regression snapshots > pins the status footer 1`] = `
+" YOLO  ·  PLAN  ·  deepseek/deepseek-v4-pro  ·  turns 3 (last: in 12k [25% cached] · out 800 ·
+ ~$0.021)  ·  total in 40k [25% cached] · out 2.4k  ·  ~$0.084 est  ·  streaming (Ctrl-C aborts)"
+`;

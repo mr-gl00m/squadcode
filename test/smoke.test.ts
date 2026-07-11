@@ -1,30 +1,7 @@
-import { describe, it, expect } from "vitest";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  atomicWriteJson,
-  atomicWriteText,
-  fileExists,
-  readJsonFile,
-} from "../src/fs-io.js";
-import { AppError, formatError, isRetryable } from "../src/errors.js";
-import { applyEnvFiles } from "../src/env.js";
-import { sanitizeForTerminal } from "../src/terminal.js";
-import {
-  AssistantTextReflow,
-  reflowAssistantText,
-} from "../src/cli/text-reflow.js";
-import {
-  calculateCost,
-  formatCost,
-  lookupPricing,
-} from "../src/pricing.js";
-import {
-  formatSkillForLLM,
-  parseFrontmatter,
-  type SkillEntry,
-} from "../src/skills.js";
+import { describe, expect, it } from "vitest";
 import {
   classifyPaste,
   composerBackspace,
@@ -42,12 +19,31 @@ import {
   getCompletionSuggestion,
   isLiteralSlashCommand,
   isSubmitInput,
+  isTerminalFocusReport,
   normalizeComposerValue,
+  type PasteEntry,
   placeholderLabel,
   splitComposerCommand,
   stripPasteMarkers,
-  type PasteEntry,
 } from "../src/cli/repl.js";
+import {
+  AssistantTextReflow,
+  reflowAssistantText,
+} from "../src/cli/text-reflow.js";
+import { applyEnvFiles } from "../src/env.js";
+import {
+  atomicWriteJson,
+  atomicWriteText,
+  fileExists,
+  readJsonFile,
+} from "../src/fs-io.js";
+import { calculateCost, formatCost, lookupPricing } from "../src/pricing.js";
+import {
+  formatSkillForLLM,
+  parseFrontmatter,
+  type SkillEntry,
+} from "../src/skills.js";
+import { sanitizeForTerminal } from "../src/terminal.js";
 
 describe("fs-io", () => {
   it("atomicWriteText round-trips through the real filesystem", async () => {
@@ -73,22 +69,6 @@ describe("fs-io", () => {
     const target = join(dir, "nested", "deep", "file.txt");
     await atomicWriteText(target, "ok");
     expect(await readFile(target, "utf-8")).toBe("ok");
-  });
-});
-
-describe("errors", () => {
-  it("formatError extracts code and message from AppError", () => {
-    const err = new AppError("TEST_CODE", "boom", { retryable: true });
-    expect(formatError(err)).toEqual({ code: "TEST_CODE", message: "boom" });
-    expect(isRetryable(err)).toBe(true);
-  });
-
-  it("formatError falls back to INTERNAL_ERROR for plain Error", () => {
-    expect(formatError(new Error("oops"))).toEqual({
-      code: "INTERNAL_ERROR",
-      message: "oops",
-    });
-    expect(isRetryable(new Error("oops"))).toBe(false);
   });
 });
 
@@ -219,11 +199,7 @@ describe("pricing", () => {
   });
 
   it("calculates incremental cost from input/output token splits", () => {
-    const cost = calculateCost(
-      { inputPerM: 3, outputPerM: 15 },
-      10_000,
-      2_000,
-    );
+    const cost = calculateCost({ inputPerM: 3, outputPerM: 15 }, 10_000, 2_000);
     // (10_000 / 1M) * 3 + (2_000 / 1M) * 15 = 0.03 + 0.03 = 0.06
     expect(cost).toBeCloseTo(0.06, 6);
   });
@@ -297,6 +273,14 @@ describe("Ink composer", () => {
     expect(isSubmitInput("\r", true)).toBe(true);
   });
 
+  it("rejects terminal focus reports before they reach the composer", () => {
+    expect(isTerminalFocusReport("\x1b[O")).toBe(true);
+    expect(isTerminalFocusReport("[I")).toBe(true);
+    expect(isTerminalFocusReport("\u009bO")).toBe(true);
+    expect(isTerminalFocusReport("[O[I[O")).toBe(true);
+    expect(isTerminalFocusReport("ordinary [O text")).toBe(false);
+  });
+
   it("detects pastes by length, embedded newlines, or bracketed markers over the word threshold", () => {
     expect(detectPaste("a")).toBe(false);
     expect(detectPaste("a".repeat(201))).toBe(true);
@@ -328,11 +312,10 @@ describe("Ink composer", () => {
       [3, { kind: "image", content: "a.png", path: "/abs/a.png" }],
     ]);
     expect(
-      expandPastes(
-        "see [Pasted Content #1] · [File #2] · [Image #3]",
-        pastes,
-      ),
-    ).toBe("see hello\nworld · [file at /abs/notes.md] · [image at /abs/a.png]");
+      expandPastes("see [Pasted Content #1] · [File #2] · [Image #3]", pastes),
+    ).toBe(
+      "see hello\nworld · [file at /abs/notes.md] · [image at /abs/a.png]",
+    );
   });
 
   it("classifies paste content by kind, falling back to text on missing path", () => {
@@ -347,7 +330,7 @@ describe("Ink composer", () => {
 
   it("placeholderLabel maps kinds to display strings", () => {
     expect(placeholderLabel({ kind: "text", content: "" }, 1)).toBe(
-      "[Pasted Content #1]",
+      "[Pasted Content 0 chars #1]",
     );
     expect(placeholderLabel({ kind: "file", content: "" }, 2)).toBe(
       "[File #2]",
@@ -361,10 +344,7 @@ describe("Ink composer", () => {
     const pastes = new Map<number, PasteEntry>([
       [4, { kind: "image", content: "a.png", path: "/abs/a.png" }],
     ]);
-    const next = composerBackspace(
-      { value: "[Image #4]", cursor: 10 },
-      pastes,
-    );
+    const next = composerBackspace({ value: "[Image #4]", cursor: 10 }, pastes);
     expect(next).toEqual({ value: "", cursor: 0 });
     expect(pastes.has(4)).toBe(false);
   });

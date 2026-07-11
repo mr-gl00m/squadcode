@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 import { isProtectedPath } from "../src/tools/protected.js";
 import { walkFiles } from "../src/tools/scan.js";
+import { writeTool } from "../src/tools/write.js";
 
 async function makeTempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "squad-protected-"));
@@ -84,6 +85,45 @@ describe("isProtectedPath - linux", () => {
     const opts = { platform: "linux" as NodeJS.Platform, home: "/home/cid" };
     expect(isProtectedPath("/home/cid/anything", opts)).toBe(false);
     expect(isProtectedPath("/etc/passwd", opts)).toBe(false);
+  });
+});
+
+describe("project metadata carveouts", () => {
+  it("keeps .git and .squad readable but blocks writes", () => {
+    const opts = {
+      platform: "linux" as NodeJS.Platform,
+      home: "/home/cid",
+      cwd: "/work/repo",
+    };
+    for (const path of [
+      "/work/repo/.git/hooks/pre-commit",
+      "/work/repo/.squad/settings.json",
+    ]) {
+      expect(isProtectedPath(path, { ...opts, access: "read" })).toBe(false);
+      expect(isProtectedPath(path, { ...opts, access: "write" })).toBe(true);
+      expect(
+        isProtectedPath(path, {
+          ...opts,
+          access: "write",
+          allowProjectMetadataWrite: true,
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it("refuses to plant a git hook through the Write tool", async () => {
+    const dir = await makeTempDir();
+    await mkdir(join(dir, ".git", "hooks"), { recursive: true });
+    await expect(
+      writeTool.execute(
+        { path: ".git/hooks/pre-commit", content: "echo owned\n" },
+        {
+          cwd: dir,
+          signal: new AbortController().signal,
+          callId: "write-hook",
+        },
+      ),
+    ).rejects.toThrow(/protected directory/);
   });
 });
 

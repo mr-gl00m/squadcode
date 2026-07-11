@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
 import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 import {
   sidecarDir,
   sidecarFilename,
@@ -45,8 +45,16 @@ describe("writeAssistantMessageSidecar", () => {
       content,
       now: new Date("2026-05-04T02:37:12.345Z"),
     });
+    // The integration writer appends a per-session counter suffix so two
+    // messages within the same millisecond produce distinct sidecars
+    // (BH-2026-05-20-102). First write for this session is counter 1.
     expect(path).toBe(
-      join(baseDir, sessionId, "messages", "2026-05-04T02-37-12-345Z.md"),
+      join(
+        baseDir,
+        sessionId,
+        "messages",
+        "2026-05-04T02-37-12-345Z-000001.md",
+      ),
     );
     const written = await readFile(path!, "utf-8");
     expect(written).toBe(content);

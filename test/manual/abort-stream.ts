@@ -92,10 +92,16 @@ clearTimeout(hardTimer);
 
 console.log(`\n--- abort-stream test result ---`);
 console.log(`total elapsed: ${endedAt - startTs}ms`);
-console.log(`chunks at abort: ${chunksAtAbort ?? "n/a"} (text=${textChunks - (lastEventAfterAbort === "text_delta" ? 1 : 0)} reasoning=${reasoningChunks})`);
-console.log(`final chunk count: ${chunks} (text=${textChunks} reasoning=${reasoningChunks})`);
+console.log(
+  `chunks at abort: ${chunksAtAbort ?? "n/a"} (text=${textChunks - (lastEventAfterAbort === "text_delta" ? 1 : 0)} reasoning=${reasoningChunks})`,
+);
+console.log(
+  `final chunk count: ${chunks} (text=${textChunks} reasoning=${reasoningChunks})`,
+);
 console.log(`chunks after abort fired: ${chunks - (chunksAtAbort ?? 0)}`);
-console.log(`time from abort to stream end: ${endedAt - startTs - ABORT_AFTER_MS}ms`);
+console.log(
+  `time from abort to stream end: ${endedAt - startTs - ABORT_AFTER_MS}ms`,
+);
 console.log(`first event after abort: ${lastEventAfterAbort ?? "(none)"}`);
 
 const passed =
