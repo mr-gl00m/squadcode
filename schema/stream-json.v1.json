@@ -1,0 +1,278 @@
+{
+  "$comment": "GENERATED CODE, DO NOT MODIFY BY HAND",
+  "$ref": "#/definitions/StreamJsonRecord",
+  "definitions": {
+    "StreamJsonRecord": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "ts": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "type": {
+              "type": "string",
+              "const": "init"
+            },
+            "schema_version": {
+              "type": "string",
+              "const": "1"
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string"
+            },
+            "resumed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ts",
+            "type",
+            "schema_version",
+            "sessionId",
+            "provider",
+            "model",
+            "cwd"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ts": {
+              "$ref": "#/definitions/StreamJsonRecord/anyOf/0/properties/ts"
+            },
+            "type": {
+              "type": "string",
+              "const": "message"
+            },
+            "role": {
+              "type": "string",
+              "const": "assistant"
+            },
+            "text": {
+              "type": "string"
+            },
+            "reasoning": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ts",
+            "type",
+            "role",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ts": {
+              "$ref": "#/definitions/StreamJsonRecord/anyOf/0/properties/ts"
+            },
+            "type": {
+              "type": "string",
+              "const": "tool_use"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "args": {}
+          },
+          "required": [
+            "ts",
+            "type",
+            "id",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ts": {
+              "$ref": "#/definitions/StreamJsonRecord/anyOf/0/properties/ts"
+            },
+            "type": {
+              "type": "string",
+              "const": "tool_result"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "content": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "denied",
+                "executed",
+                "unknown_tool",
+                "aborted"
+              ]
+            },
+            "artifact": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": "string"
+                },
+                "fullSizeBytes": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "path",
+                "sha256",
+                "fullSizeBytes"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "ts",
+            "type",
+            "id",
+            "name",
+            "ok",
+            "content"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ts": {
+              "$ref": "#/definitions/StreamJsonRecord/anyOf/0/properties/ts"
+            },
+            "type": {
+              "type": "string",
+              "const": "error"
+            },
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ts",
+            "type",
+            "code",
+            "message",
+            "retryable"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ts": {
+              "$ref": "#/definitions/StreamJsonRecord/anyOf/0/properties/ts"
+            },
+            "type": {
+              "type": "string",
+              "const": "result"
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "usage": {
+              "type": "object",
+              "properties": {
+                "inputTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "cachedInputTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "outputTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "totalTokens": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "inputTokens",
+                "cachedInputTokens",
+                "outputTokens",
+                "totalTokens"
+              ],
+              "additionalProperties": false
+            },
+            "costUsd": {
+              "type": "number",
+              "minimum": 0
+            },
+            "toolCalls": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "exitCode": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "ts",
+            "type",
+            "sessionId",
+            "provider",
+            "model",
+            "usage",
+            "costUsd",
+            "toolCalls",
+            "exitCode"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
