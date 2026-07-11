@@ -92,9 +92,7 @@ export class AssistantTextReflow {
 
     const out = `${line}\n`;
     this.updateFenceState(line);
-    this.trailingNewlines = isBlank
-      ? this.trailingNewlines + 1
-      : 1;
+    this.trailingNewlines = isBlank ? this.trailingNewlines + 1 : 1;
     return out;
   }
 }

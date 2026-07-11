@@ -1,12 +1,11 @@
+import { parseUnifiedDiff } from "../tools/apply-patch.js";
+
 export type PatternKind = "path" | "command" | "any";
 
-export function compilePattern(
-  pattern: string,
-  kind: PatternKind,
-): RegExp {
+export function compilePattern(pattern: string, kind: PatternKind): RegExp {
   if (kind === "command" || kind === "any") {
     const escaped = pattern
-      .replace(/[.+^$()|{}\[\]\\]/g, "\\$&")
+      .replace(/[.+^$()|{}[\]\\]/g, "\\$&")
       .replace(/\*/g, ".*")
       .replace(/\?/g, ".");
     return new RegExp(`^${escaped}$`, "i");
@@ -17,7 +16,7 @@ export function compilePattern(
     .replace(/\\/g, "/")
     .replace(/\*\*\//g, SENT_DSS)
     .replace(/\*\*/g, SENT_DS)
-    .replace(/[.+^$()|{}\[\]]/g, "\\$&")
+    .replace(/[.+^$()|{}[\]]/g, "\\$&")
     .replace(/\*/g, "[^/]*")
     .replace(/\?/g, "[^/]")
     .replace(new RegExp(SENT_DSS, "g"), "(?:.*/)?")
@@ -77,6 +76,33 @@ export interface MatchKey {
   key: string;
 }
 
+export function extractMatchKeys(toolName: string, args: unknown): MatchKey[] {
+  if (toolName === "ApplyPatch") {
+    const patch = (args as { patch?: unknown } | null)?.patch;
+    if (typeof patch !== "string") {
+      return [{ kind: "path", key: "<invalid-apply-patch>" }];
+    }
+    try {
+      const paths = [
+        ...new Set(
+          parseUnifiedDiff(patch)
+            .map((file) => normalizePath(file.path))
+            .filter((path) => path.length > 0),
+        ),
+      ];
+      if (paths.length > 0) {
+        return paths.map((key) => ({ kind: "path" as const, key }));
+      }
+    } catch {
+      // A malformed patch will fail during preview/execute too. Keep its
+      // permission scope narrow instead of falling back to the wildcard used
+      // by tools that genuinely have no match key.
+    }
+    return [{ kind: "path", key: "<invalid-apply-patch>" }];
+  }
+  return [extractMatchKey(toolName, args)];
+}
+
 export function extractMatchKey(toolName: string, args: unknown): MatchKey {
   if (args === null || typeof args !== "object") {
     return { kind: "any", key: "" };
@@ -100,6 +126,16 @@ export function extractMatchKey(toolName: string, args: unknown): MatchKey {
   }
 }
 
+export function deriveScopePatterns(toolName: string, args: unknown): string[] {
+  if (toolName === "ApplyPatch") {
+    // Multi-file approval grants are exact per-file keys. Broadening each path
+    // to its parent directory would let an overlapping later patch inherit
+    // permission for a sibling the user never approved.
+    return extractMatchKeys(toolName, args).map((match) => match.key);
+  }
+  return [deriveScopePattern(toolName, args)];
+}
+
 export function deriveScopePattern(toolName: string, args: unknown): string {
   const m = extractMatchKey(toolName, args);
   if (m.kind === "command") return bashArityPrefix(m.key);
@@ -112,7 +148,7 @@ export function deriveScopePattern(toolName: string, args: unknown): string {
 // require re-prompting on every sibling file. Repo-root files keep their
 // literal path because '.'/'' parent would otherwise widen to '*' (entire
 // project), which is more than the user implied.
-export function pathScopePattern(normalizedPath: string): string {
+function pathScopePattern(normalizedPath: string): string {
   if (normalizedPath.length === 0) return "*";
   const slash = normalizedPath.lastIndexOf("/");
   if (slash <= 0) return normalizedPath;

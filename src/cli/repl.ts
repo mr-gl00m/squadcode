@@ -1,0 +1,35 @@
+export {
+  ComposerLine,
+  type ComposerState,
+  classifyPaste,
+  composerBackspace,
+  composerDeleteWord,
+  composerEnd,
+  composerForwardDelete,
+  composerHome,
+  composerInsert,
+  composerMoveLeft,
+  composerMoveRight,
+  detectPaste,
+  expandPastes,
+  formatElapsed,
+  formatTokenCount,
+  getCompletionSuggestion,
+  isLiteralSlashCommand,
+  isSubmitInput,
+  isTerminalFocusReport,
+  normalizeComposerValue,
+  type PasteEntry,
+  type PasteKind,
+  parseUsageArgs,
+  placeholderLabel,
+  splitComposerCommand,
+  stripPasteMarkers,
+} from "./repl-composer.js";
+export { runInkRepl } from "./repl-host.js";
+export {
+  PermissionOverlay,
+  StatusFooter,
+  type StatusFooterProps,
+} from "./repl-presentation.js";
+export type { ReplControl, ReplOptions } from "./repl-types.js";

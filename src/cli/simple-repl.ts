@@ -1,43 +1,58 @@
 import { createInterface } from "node:readline";
+import type { JobRegistry } from "../engine/job-registry.js";
 import { runAgentLoop } from "../engine/loop.js";
+import type { DiagnosticsSetup } from "../engine/post-edit-diagnostics.js";
+import { makePreTurnInjector } from "../engine/pre-turn.js";
+import type { TimerRegistry } from "../engine/timer-registry.js";
+import {
+  guardianYoloAdvice,
+  guardPermissionRequest,
+  type PermissionGuardian,
+} from "../guardian.js";
 import type { HookRunner } from "../hooks/runner.js";
 import { logger } from "../logger.js";
+import { loadUserGlobalRules, persistUserRule } from "../permissions/global.js";
+import { applyModeAddendums, type Mode } from "../permissions/plan.js";
 import type { PolicyConfig, RuleMap } from "../permissions/policy.js";
 import {
   loadProjectRules,
   persistProjectRule,
 } from "../permissions/project.js";
 import {
-  promptForPermission,
   type PromptOutcome,
   type PromptRequest,
+  promptForPermission,
 } from "../permissions/prompt.js";
+import { calculateCost, lookupPricing } from "../pricing.js";
+import { userPromptMessage } from "../prompts/boundary.js";
 import type {
-  CanonicalEvent,
   CanonicalMessage,
   CanonicalToolCall,
   LLMProvider,
 } from "../providers/types.js";
 import { makeOffloadLargeOutput } from "../sessions/artifacts.js";
+import { formatRecapFromMessages } from "../sessions/recap.js";
 import type { SessionStore } from "../sessions/store.js";
 import type { SessionMetadata } from "../sessions/types.js";
 import { updateDefaultSelection } from "../settings.js";
 import { sanitizeForTerminal } from "../terminal.js";
-import { calculateCost, lookupPricing } from "../pricing.js";
 import type { ToolRegistry } from "../tools/registry.js";
-import { findChecklist, checklistMissingMessage } from "../yolo/checklist.js";
+import { checklistMissingMessage, findChecklist } from "../yolo/checklist.js";
 import {
   createYoloSession,
-  yoloSystemPromptAddendum,
   type YoloSession,
+  yoloSystemPromptAddendum,
 } from "../yolo/index.js";
 import { BANNER, bannerSubtitle } from "./banner.js";
+import { persistEventToStore } from "./persist-event.js";
 import { createPrintState, renderEvent } from "./print.js";
+import { parseUsageArgs } from "./repl.js";
+import { formatReplay, parseReplayLimit } from "./replay.js";
+import { pickResumeTarget } from "./resume-target.js";
 import { handleSlash, type SlashContext } from "./slash.js";
 import { formatUsageReport } from "./usage-format.js";
-import { parseUsageArgs } from "./repl.js";
 
-const VERSION = "1.1.0";
+const VERSION = "1.9.0";
 
 export interface SimpleReplOptions {
   provider: LLMProvider;
@@ -53,10 +68,15 @@ export interface SimpleReplOptions {
   sessionId: string;
   metadata: SessionMetadata;
   messages: CanonicalMessage[];
+  guardian?: PermissionGuardian;
   resumed: boolean;
   allowProjectPersist: boolean;
   hookRunner: HookRunner;
   yolo: YoloSession | null;
+  allowDeletes: boolean;
+  jobs?: JobRegistry;
+  timers?: TimerRegistry;
+  diagnostics?: DiagnosticsSetup;
 }
 
 export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
@@ -65,9 +85,11 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
   const projectRules: RuleMap = opts.allowProjectPersist
     ? await loadProjectRules(opts.cwd)
     : new Map();
+  const userGlobalRules: RuleMap = await loadUserGlobalRules();
   let provider = opts.provider;
   let providerName = sanitizeForTerminal(opts.providerName);
   let model = sanitizeForTerminal(opts.model);
+  let sessionId = opts.sessionId;
   let turnCount = opts.metadata.turnCount;
   let totalTokens = opts.metadata.totalTokens;
   let yolo: YoloSession | null = opts.yolo;
@@ -123,11 +145,12 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
     },
     usageReport: (arg: string) => {
       const parsed = parseUsageArgs(arg);
-      const filter: { sessionId?: string; cwd?: string; sinceIso?: string } = {};
+      const filter: { sessionId?: string; cwd?: string; sinceIso?: string } =
+        {};
       let scopeLabel: string;
       if (parsed.scope === "session") {
-        filter.sessionId = opts.sessionId;
-        scopeLabel = `current session (${opts.sessionId.slice(0, 8)})`;
+        filter.sessionId = sessionId;
+        scopeLabel = `current session (${sessionId.slice(0, 8)})`;
       } else if (parsed.scope === "all") {
         scopeLabel = "all sessions";
       } else {
@@ -156,7 +179,9 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
       const lines = tools.map((t) => {
         const tag = t.isReadOnly ? "ro" : "rw";
         const desc =
-          t.description.length > 80 ? `${t.description.slice(0, 77)}...` : t.description;
+          t.description.length > 80
+            ? `${t.description.slice(0, 77)}...`
+            : t.description;
         return `  ${t.name.padEnd(12)} [${tag}, ${t.defaultPermission}] — ${desc}`;
       });
       return `${tools.length} tool${tools.length === 1 ? "" : "s"}:\n${lines.join("\n")}`;
@@ -167,64 +192,136 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
       const lines = recent.map((s) => {
         const id = s.sessionId.slice(0, 8);
         const when = s.updatedAt.replace("T", " ").slice(0, 19);
-        const here = s.sessionId === opts.sessionId ? " (current)" : "";
+        const here = s.sessionId === sessionId ? " (current)" : "";
         return `  ${id}  ${when}  ${s.provider}/${s.model}  ${s.turnCount} turn${s.turnCount === 1 ? "" : "s"}${here}`;
       });
       return `recent sessions in ${opts.cwd}:\n${lines.join("\n")}`;
     },
+    resolveResume: (arg) =>
+      pickResumeTarget(opts.store.list({ cwd: opts.cwd }), sessionId, arg),
+    replay: (arg) =>
+      formatReplay(messages, sessionId.slice(0, 8), parseReplayLimit(arg)),
     clear: () => {
       messages.length = 0;
       sessionRules.clear();
     },
+    recap: () => {
+      const usage = opts.store.usageTotals({ sessionId: sessionId });
+      return formatRecapFromMessages({
+        metadata: {
+          ...opts.metadata,
+          turnCount,
+          totalTokens,
+          provider: providerName,
+          model,
+        },
+        messages,
+        usage,
+      });
+    },
     yoloStatus: () => {
       if (yolo) {
-        return `YOLO is ON. Sandbox=${opts.cwd}. Archive=${yolo.archiveDir}. Checklist=${yolo.checklistPath ?? "(none)"}.`;
+        return `YOLO is ON. PathGuard=${opts.cwd}. Archive=${yolo.archiveDir}. Checklist=${yolo.checklistPath ?? "(none)"}.`;
       }
       return "YOLO is OFF.";
     },
     toggleYolo: async () => {
       if (yolo) {
         yolo = null;
-        systemPrompt = opts.baseSystemPrompt;
-        policy = basePolicy;
+        systemPrompt = applyModeAddendums(opts.baseSystemPrompt, {
+          plan: policy.mode === "plan",
+        });
+        policy = { ...basePolicy, mode: policy.mode };
         return "YOLO disarmed. Permission prompts are back on.";
       }
       const checklist = await findChecklist(opts.cwd);
       if (!checklist) {
         return checklistMissingMessage();
       }
-      yolo = createYoloSession({ cwd: opts.cwd, checklistPath: checklist.path });
+      const guardianAdvice = await guardianYoloAdvice(
+        opts.guardian,
+        opts.cwd,
+        checklist.path,
+      );
+      yolo = createYoloSession({
+        cwd: opts.cwd,
+        checklistPath: checklist.path,
+      });
       const addendum = `${yoloSystemPromptAddendum(yolo)}\n\n## Loaded checklist (${checklist.path})\n${checklist.contents}`;
-      systemPrompt = `${opts.baseSystemPrompt}\n\n${addendum}`;
-      policy = { ...basePolicy, dangerouslySkipPermissions: true };
-      return `YOLO armed. Sandbox=${opts.cwd}. Archive=${yolo.archiveDir}. Checklist=${checklist.path}.`;
+      systemPrompt = applyModeAddendums(opts.baseSystemPrompt, {
+        yolo: addendum,
+        plan: policy.mode === "plan",
+      });
+      policy = {
+        ...basePolicy,
+        dangerouslySkipPermissions: true,
+        mode: policy.mode,
+      };
+      const armed = `YOLO armed. PathGuard=${opts.cwd}. Archive=${yolo.archiveDir}. Checklist=${checklist.path}.`;
+      return guardianAdvice ? `[advisory] ${guardianAdvice}\n${armed}` : armed;
+    },
+    getMode: () => policy.mode,
+    setMode: (next: Mode) => {
+      policy.mode = next;
+      const yoloAddendum = yolo
+        ? `${yoloSystemPromptAddendum(yolo)}${
+            yolo.checklistPath
+              ? `\n\n## Loaded checklist (${yolo.checklistPath})`
+              : ""
+          }`
+        : null;
+      systemPrompt = applyModeAddendums(opts.baseSystemPrompt, {
+        yolo: yoloAddendum,
+        plan: next === "plan",
+      });
+      return next === "plan"
+        ? "mode → plan. Edit/Write/ApplyPatch will be denied; Shell will ask. /mode act to resume."
+        : "mode → act. Default permissions restored.";
     },
   };
 
-  process.stdout.write(`${BANNER}\n${bannerSubtitle(VERSION, providerName, model)}\n`);
+  process.stdout.write(
+    `${BANNER}\n${bannerSubtitle(VERSION, providerName, model)}\n`,
+  );
   if (opts.resumed) {
     process.stdout.write(
-      `(resumed session ${opts.sessionId.slice(0, 8)} with ${messages.length} prior messages)\n`,
+      `(resumed session ${sessionId.slice(0, 8)} with ${messages.length} prior messages)\n`,
     );
   }
   writePrompt();
 
   const askPermission = async (req: PromptRequest): Promise<PromptOutcome> => {
-    const outcome = await promptForPermission(req, {
+    const guardedReq = await guardPermissionRequest(opts.guardian, req);
+    const outcome = await promptForPermission(guardedReq, {
       allowProjectPersist: opts.allowProjectPersist,
+      allowUserPersist: true,
     });
-    opts.store.recordPermissionDecision(opts.sessionId, {
+    opts.store.recordPermissionDecision(sessionId, {
       tool: req.toolName,
       callId: req.callId,
       outcome,
     });
     if (outcome === "always-project" && opts.allowProjectPersist) {
       try {
-        await persistProjectRule(opts.cwd, req.toolName, req.scopePattern, "allow");
+        for (const pattern of req.scopePatterns) {
+          await persistProjectRule(opts.cwd, req.toolName, pattern, "allow");
+        }
       } catch (err) {
         logger.warn(
           { err: err instanceof Error ? err.message : String(err) },
           "failed to persist project permission",
+        );
+      }
+    }
+    if (outcome === "always-user") {
+      try {
+        for (const pattern of req.scopePatterns) {
+          await persistUserRule(req.toolName, pattern, "allow");
+        }
+      } catch (err) {
+        logger.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          "failed to persist user-global permission",
         );
       }
     }
@@ -251,17 +348,29 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
         const msg = await slashCtx.toggleYolo();
         process.stdout.write(`${sanitizeForTerminal(msg)}\n`);
       }
+      if (result.followup?.kind === "resume") {
+        const resumed = await opts.store.resume(result.followup.sessionId);
+        messages.length = 0;
+        messages.push(...resumed.messages);
+        sessionRules.clear();
+        sessionId = resumed.metadata.sessionId;
+        turnCount = resumed.metadata.turnCount;
+        totalTokens = resumed.metadata.totalTokens;
+        process.stdout.write(
+          `(resumed session ${sessionId.slice(0, 8)} with ${messages.length} prior messages)\n`,
+        );
+      }
       if (result.exit) break;
       writePrompt();
       continue;
     }
 
-    messages.push({ role: "user", content: line });
-    await opts.store.appendUserMessage(opts.sessionId, line);
+    messages.push(userPromptMessage(line));
+    await opts.store.appendUserMessage(sessionId, line);
     try {
       await opts.hookRunner.fire({
         event: "UserPromptSubmit",
-        sessionId: opts.sessionId,
+        sessionId: sessionId,
         cwd: opts.cwd,
         prompt: line,
       });
@@ -300,11 +409,26 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
         abort: abort.signal,
         sessionRules,
         projectRules,
+        userGlobalRules,
         askPermission,
-        offloadLargeOutput: makeOffloadLargeOutput({ sessionId: opts.sessionId }),
+        offloadLargeOutput: makeOffloadLargeOutput({
+          sessionId: sessionId,
+        }),
         hookRunner: opts.hookRunner,
-        sessionId: opts.sessionId,
+        sessionId: sessionId,
+        ...(opts.jobs && { jobs: opts.jobs }),
+        ...(opts.timers && { timers: opts.timers }),
+        ...(opts.diagnostics && { diagnostics: opts.diagnostics.tracker }),
+        ...((opts.jobs || opts.timers || opts.diagnostics) && {
+          injectPreTurn: makePreTurnInjector({
+            instructionsCwd: opts.cwd,
+            ...(opts.timers && { timers: opts.timers }),
+            ...(opts.jobs && { jobs: opts.jobs }),
+            ...(opts.diagnostics && { diagnostics: opts.diagnostics }),
+          }),
+        }),
         ...(yolo && { yolo }),
+        ...(opts.allowDeletes && { allowDeletes: true }),
       })) {
         if (ev.type === "usage") {
           totalTokens += ev.usage.totalTokens;
@@ -319,7 +443,7 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
             : 0;
           opts.store.recordUsage({
             ts: new Date().toISOString(),
-            sessionId: opts.sessionId,
+            sessionId: sessionId,
             cwd: opts.cwd,
             provider: providerName,
             model,
@@ -334,16 +458,16 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
         }
         if (ev.type === "tool_call_done") turnToolCalls += 1;
         renderEvent(ev, state);
-        await persistEventToStore(opts.store, opts.sessionId, ev, buffers);
+        await persistEventToStore(opts.store, sessionId, ev, buffers);
       }
-      opts.store.bumpUsage(opts.sessionId, 1, buffers.turnTokens);
+      opts.store.bumpUsage(sessionId, 1, buffers.turnTokens);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error({ err: msg }, "repl turn failed");
       process.stderr.write(`turn failed: ${sanitizeForTerminal(msg)}\n`);
     } finally {
       process.off("SIGINT", onSigint);
-      await opts.store.flush(opts.sessionId);
+      await opts.store.flush(sessionId);
     }
     turnCount += 1;
     writePrompt();
@@ -359,79 +483,4 @@ function persistDefaultSelection(providerName: string, model: string): void {
       "default model selection persist failed",
     );
   });
-}
-
-async function persistEventToStore(
-  store: SessionStore,
-  sessionId: string,
-  ev: CanonicalEvent,
-  buffers: {
-    text: string;
-    reasoning: string;
-    pendingToolCalls: CanonicalToolCall[];
-    turnTokens: number;
-  },
-): Promise<void> {
-  switch (ev.type) {
-    case "text_delta":
-      buffers.text += ev.text;
-      return;
-    case "reasoning_delta":
-      buffers.reasoning += ev.text;
-      return;
-    case "tool_call_done":
-      buffers.pendingToolCalls.push({
-        id: ev.id,
-        name: ev.name,
-        args: ev.args,
-      });
-      await store.appendToolCall(sessionId, {
-        callId: ev.id,
-        toolName: ev.name,
-        args: ev.args,
-      });
-      return;
-    case "done": {
-      if (
-        buffers.text.length > 0 ||
-        buffers.reasoning.length > 0 ||
-        buffers.pendingToolCalls.length > 0
-      ) {
-        const payload: Parameters<SessionStore["appendAssistantMessage"]>[1] = {
-          content: buffers.text,
-        };
-        if (buffers.pendingToolCalls.length > 0) {
-          payload.toolCalls = buffers.pendingToolCalls;
-        }
-        if (buffers.reasoning.length > 0) {
-          payload.reasoningContent = buffers.reasoning;
-        }
-        await store.appendAssistantMessage(sessionId, payload);
-      }
-      buffers.text = "";
-      buffers.reasoning = "";
-      buffers.pendingToolCalls = [];
-      return;
-    }
-    case "tool_result": {
-      await store.appendToolResult(sessionId, {
-        callId: ev.id,
-        toolName: ev.name,
-        ok: ev.ok,
-        reason: ev.reason ?? "executed",
-        content: ev.content,
-        contentTruncated: false,
-        ...(ev.error !== undefined && { error: ev.error }),
-        ...(ev.artifact && { artifact: ev.artifact }),
-      });
-      return;
-    }
-    case "usage":
-      buffers.turnTokens += ev.usage.totalTokens;
-      return;
-    case "tool_call_start":
-    case "tool_call_delta":
-    case "error":
-      return;
-  }
 }

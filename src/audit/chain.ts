@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 
+// This is a continuity chain, not an authenticity proof. The table stores
+// payload hashes but not payloads; links are unkeyed and externally unanchored.
+// validate() detects accidental gaps/corruption, while a motivated database
+// editor can recompute every link.
+
 export type AuditAction =
   | "session_started"
   | "session_resumed"
@@ -9,6 +14,7 @@ export type AuditAction =
   | "tool_result"
   | "permission_decision"
   | "session_archived"
+  | "session_rollback"
   | "hook_fire";
 
 export interface AuditAppendInput {
@@ -47,7 +53,12 @@ export class AuditChain {
   private readonly insertStmt: Database.Statement;
   private readonly fetchLastStmt: Database.Statement;
   private readonly fetchAllStmt: Database.Statement;
-  private lastLink: string | null;
+  private readonly appendAtomic: (input: {
+    ts: string;
+    sessionId: string;
+    action: AuditAction;
+    payloadHash: string;
+  }) => void;
 
   constructor(db: Database.Database) {
     this.insertStmt = db.prepare(`
@@ -60,23 +71,42 @@ export class AuditChain {
     this.fetchAllStmt = db.prepare(
       "SELECT id, ts, session_id, action, payload_hash, prev_hash FROM audit_log ORDER BY id ASC",
     );
-    const last = this.fetchLastStmt.get() as RawRow | undefined;
-    this.lastLink = last ? linkHash(last.payload_hash, last.prev_hash) : null;
+    const appendTransaction = db.transaction(
+      (input: {
+        ts: string;
+        sessionId: string;
+        action: AuditAction;
+        payloadHash: string;
+      }) => {
+        // Re-read the tip inside an IMMEDIATE transaction. Caching it in the
+        // AuditChain instance forks continuity when two SessionStore instances
+        // append through separate SQLite connections.
+        const last = this.fetchLastStmt.get() as RawRow | undefined;
+        const prevHash = last
+          ? linkHash(last.payload_hash, last.prev_hash)
+          : null;
+        this.insertStmt.run({
+          ts: input.ts,
+          session_id: input.sessionId,
+          action: input.action,
+          payload_hash: input.payloadHash,
+          prev_hash: prevHash,
+        });
+      },
+    );
+    this.appendAtomic = (input) => appendTransaction.immediate(input);
   }
 
   append(input: AuditAppendInput): void {
     const ts = new Date().toISOString();
     const payloadJson = JSON.stringify(input.payload);
     const payloadHash = sha256(payloadJson);
-    const prevHash = this.lastLink;
-    this.insertStmt.run({
+    this.appendAtomic({
       ts,
-      session_id: input.sessionId,
+      sessionId: input.sessionId,
       action: input.action,
-      payload_hash: payloadHash,
-      prev_hash: prevHash,
+      payloadHash,
     });
-    this.lastLink = linkHash(payloadHash, prevHash);
   }
 
   validate(): { ok: boolean; brokenAtId?: number; reason?: string } {

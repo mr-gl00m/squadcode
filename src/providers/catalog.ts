@@ -10,14 +10,56 @@ import { logger } from "../logger.js";
 // classic gpt-4o all share llm-chat. The kind tells the catalog which
 // adapter factory to instantiate; the vendor lives in `provider_id` and
 // the URL/key live in `base_url` / `env_key_var`.
-export type ProviderKind = "llm-chat" | "llm-response" | "llm-message" | "llm-local";
+export type ProviderKind =
+  | "llm-chat"
+  | "llm-response"
+  | "llm-message"
+  | "llm-local"
+  | "external-cli"
+  | "router";
 
-export const PROVIDER_KINDS: readonly ProviderKind[] = [
+const PROVIDER_KINDS: readonly ProviderKind[] = [
   "llm-chat",
   "llm-response",
   "llm-message",
   "llm-local",
+  "external-cli",
+  "router",
 ] as const;
+
+// Config for kind=router rows (v1.4 Direction B): an external command that, given
+// the prompt + tool catalog on stdin, prints {provider_id, model_id, rationale?}.
+// Squad then drives the chosen model. base_url is required by the schema but
+// ignored for this kind — use a placeholder.
+const routerSchema = z
+  .object({
+    command: z.array(z.string().min(1)).min(1),
+    timeout_ms: z.number().int().positive().optional(),
+    pass_env: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/)).optional(),
+  })
+  .strict();
+
+// Config for kind=external-cli rows: the user-supplied command and transcript
+// parse. No vendor knowledge lives here. base_url is still required by the
+// schema for uniformity but ignored for this kind — set it to any placeholder
+// (e.g. "http://localhost").
+const externalCliSchema = z
+  .object({
+    command: z.array(z.string().min(1)).min(1),
+    prompt_via: z.enum(["arg", "stdin"]).optional(),
+    parse: z
+      .object({
+        mode: z.enum(["raw", "json_path"]),
+        json_path: z.string().optional(),
+      })
+      .strict()
+      .optional(),
+    timeout_ms: z.number().int().positive().optional(),
+    pass_env: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/)).optional(),
+    // Run the agent in a fresh git worktree under .squad/worktrees/<agent_id>/.
+    worktree: z.boolean().optional(),
+  })
+  .strict();
 
 const capabilitiesSchema = z
   .object({
@@ -32,7 +74,9 @@ const modelEntrySchema = z
   .object({
     id: z.string().min(1),
     provider_id: z.string().min(1),
-    kind: z.enum(PROVIDER_KINDS as unknown as [ProviderKind, ...ProviderKind[]]),
+    kind: z.enum(
+      PROVIDER_KINDS as unknown as [ProviderKind, ...ProviderKind[]],
+    ),
     base_url: z.string().url(),
     // Optional env var that overrides base_url when set. Lets a user keep
     // their .env-driven URL config working without editing the catalog —
@@ -43,6 +87,8 @@ const modelEntrySchema = z
     capabilities: capabilitiesSchema.optional(),
     context_window: z.number().int().positive().optional(),
     aliases: z.array(z.string()).optional(),
+    external_cli: externalCliSchema.optional(),
+    router: routerSchema.optional(),
   })
   .strict();
 
@@ -55,20 +101,26 @@ const catalogFileSchema = z
 
 export type ModelEntry = z.infer<typeof modelEntrySchema>;
 export type ModelCapabilities = z.infer<typeof capabilitiesSchema>;
-export type CatalogFile = z.infer<typeof catalogFileSchema>;
 
 export interface ModelCatalog {
   list(): ModelEntry[];
   get(id: string): ModelEntry | undefined;
   byProvider(providerId: string): ModelEntry[];
   byKind(kind: ProviderKind): ModelEntry[];
+  provenance(id: string): CatalogEntryProvenance | undefined;
+}
+
+export interface CatalogEntryProvenance {
+  origin: "built-in" | "user" | "extra";
+  source: string;
+  version?: string;
 }
 
 const DEFAULT_CATALOG_PATH = fileURLToPath(
   new URL("./default-models.json", import.meta.url),
 );
 
-function userCatalogPath(): string {
+export function userCatalogPath(): string {
   return join(homedir(), ".squad", "models.json");
 }
 
@@ -76,18 +128,26 @@ function readJsonFile(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf-8"));
 }
 
-function loadFile(path: string, label: string): ModelEntry[] {
-  if (!existsSync(path)) return [];
+interface LoadedCatalogFile {
+  models: ModelEntry[];
+  version?: string;
+}
+
+function loadFile(path: string, label: string): LoadedCatalogFile {
+  if (!existsSync(path)) return { models: [] };
   try {
     const raw = readJsonFile(path);
     const parsed = catalogFileSchema.parse(raw);
-    return parsed.models;
+    return {
+      models: parsed.models,
+      ...(parsed.version !== undefined && { version: parsed.version }),
+    };
   } catch (err: unknown) {
     logger.warn(
       { err: err instanceof Error ? err.message : String(err), path, label },
       "model catalog file failed to parse; ignoring",
     );
-    return [];
+    return { models: [] };
   }
 }
 
@@ -114,7 +174,25 @@ export function loadCatalog(opts: LoadCatalogOptions = {}): ModelCatalog {
   const defaults = loadFile(defaultPath, "default");
   const overrides = loadFile(userPath, "user");
   const extras = opts.extraEntries ?? [];
-  const merged = mergeById(defaults, overrides, extras);
+  const merged = mergeById(defaults.models, overrides.models, extras);
+  const origins = new Map<string, CatalogEntryProvenance>();
+  for (const entry of defaults.models) {
+    origins.set(entry.id, {
+      origin: "built-in",
+      source: defaultPath,
+      ...(defaults.version !== undefined && { version: defaults.version }),
+    });
+  }
+  for (const entry of overrides.models) {
+    origins.set(entry.id, {
+      origin: "user",
+      source: userPath,
+      ...(overrides.version !== undefined && { version: overrides.version }),
+    });
+  }
+  for (const entry of extras) {
+    origins.set(entry.id, { origin: "extra", source: "runtime extraEntries" });
+  }
 
   // Build alias index alongside the primary id index.
   const byId = new Map<string, ModelEntry>();
@@ -131,6 +209,10 @@ export function loadCatalog(opts: LoadCatalogOptions = {}): ModelCatalog {
     byProvider: (providerId) =>
       merged.filter((e) => e.provider_id === providerId),
     byKind: (kind) => merged.filter((e) => e.kind === kind),
+    provenance: (id) => {
+      const entry = byId.get(id);
+      return entry ? origins.get(entry.id) : undefined;
+    },
   };
 }
 

@@ -13,9 +13,7 @@
         "cache_control": true
       },
       "context_window": 128000,
-      "aliases": [
-        "deepseek-v4-flash"
-      ]
+      "aliases": ["deepseek-v4-flash"]
     },
     {
       "id": "deepseek-reasoner",
@@ -30,9 +28,7 @@
         "cache_control": true
       },
       "context_window": 128000,
-      "aliases": [
-        "deepseek-v4-pro"
-      ]
+      "aliases": ["deepseek-v4-pro"]
     },
     {
       "id": "claude-sonnet-4-6",
@@ -159,12 +155,17 @@
       "capabilities": {
         "tool_use": true
       },
-      "aliases": [
-        "llama3.2",
-        "llama3.1",
-        "qwen2.5-coder",
-        "qwen2.5-coder:32b"
-      ]
+      "aliases": ["llama3.2", "llama3.1", "qwen2.5-coder", "qwen2.5-coder:32b"]
+    },
+    {
+      "id": "lemonade-default",
+      "provider_id": "lemonade",
+      "kind": "llm-local",
+      "base_url": "http://localhost:13305",
+      "base_url_env_var": "LEMONADE_BASE_URL",
+      "capabilities": {
+        "tool_use": true
+      }
     }
   ]
 }

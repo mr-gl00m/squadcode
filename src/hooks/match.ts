@@ -1,5 +1,5 @@
 import { compilePattern, extractMatchKey } from "../permissions/match.js";
-import { TOOL_HOOK_EVENTS, type HookConfig, type HookEvent } from "./config.js";
+import { type HookConfig, type HookEvent, TOOL_HOOK_EVENTS } from "./config.js";
 
 export interface HookMatchInput {
   event: HookEvent;

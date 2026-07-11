@@ -35,6 +35,7 @@ const CommandHookSchema = z.object({
   ...baseFields,
   type: z.literal("command"),
   command: z.string().min(1),
+  passEnv: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/)).optional(),
 });
 
 const HttpHookSchema = z.object({
@@ -43,6 +44,9 @@ const HttpHookSchema = z.object({
   url: z.string().url(),
   method: z.enum(["POST", "PUT", "GET", "PATCH"]).optional(),
   headers: z.record(z.string()).optional(),
+  allowedHosts: z.array(z.string().min(1)).optional(),
+  allowedUrls: z.array(z.string().url()).optional(),
+  allowLocalNetwork: z.boolean().optional(),
 });
 
 export const HookSchema = z.discriminatedUnion("type", [

@@ -1,6 +1,5 @@
 export const AUTO_COMPACT_THRESHOLD = 0.8;
 export const DEFAULT_TAIL_TURNS = 2;
-export const MIN_PRESERVE_RECENT_TOKENS = 2_000;
 
 export const STRUCTURED_SUMMARIZER_PROMPT = `You are a conversation summarizer. Output a faithful, compact summary of the prior conversation that preserves every decision, fact, file path, code reference, name, and current task state. Drop only redundant chatter. No preamble or sign-off.
 

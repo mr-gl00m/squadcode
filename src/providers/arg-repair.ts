@@ -86,17 +86,17 @@ function tryParse(s: string): ParseResult {
 function stripControlCharsInStrings(s: string): string {
   let out = "";
   let inString = false;
-  let escape = false;
+  let escaped = false;
   for (let i = 0; i < s.length; i++) {
     const ch = s.charCodeAt(i);
     const charStr = s[i] as string;
-    if (escape) {
+    if (escaped) {
       out += charStr;
-      escape = false;
+      escaped = false;
       continue;
     }
     if (ch === 0x5c /* \ */) {
-      escape = true;
+      escaped = true;
       out += charStr;
       continue;
     }
@@ -119,35 +119,91 @@ function stripControlCharsInStrings(s: string): string {
   return out;
 }
 
-// Strip trailing commas before `}`, `]`, or end of input. Iterates to a
-// fixed point so nested cases collapse correctly.
+// Strip trailing commas before `}`, `]`, or end of input — but only when
+// the comma sits OUTSIDE a quoted string. The previous regex pass was
+// content-blind and corrupted string values containing literal `,}` or
+// `,]` substrings. Walks the input once with the same inString/escaped
+// state machine that stripControlCharsInStrings uses; on each comma in
+// non-string context, peeks ahead through whitespace to decide whether
+// to drop it.
 function stripTrailingCommas(s: string): string {
-  let out = s;
-  // Up to a small bound so a pathological input can't spin forever.
-  for (let i = 0; i < 16; i++) {
-    const prev = out;
-    out = out.replace(/,}/g, "}").replace(/,]/g, "]").replace(/,+$/, "");
-    if (out === prev) break;
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s.charCodeAt(i);
+    const charStr = s[i] as string;
+    if (escaped) {
+      out += charStr;
+      escaped = false;
+      continue;
+    }
+    if (ch === 0x5c /* \ */) {
+      escaped = true;
+      out += charStr;
+      continue;
+    }
+    if (ch === 0x22 /* " */) {
+      inString = !inString;
+      out += charStr;
+      continue;
+    }
+    if (!inString && ch === 0x2c /* , */) {
+      let j = i + 1;
+      while (j < s.length) {
+        const c = s.charCodeAt(j);
+        if (c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d) {
+          j += 1;
+          continue;
+        }
+        break;
+      }
+      if (j >= s.length) continue;
+      const next = s.charCodeAt(j);
+      if (next === 0x7d /* } */ || next === 0x5d /* ] */) continue;
+    }
+    out += charStr;
   }
   return out;
 }
 
 // Balance braces and brackets: count `{`/`}` and `[`/`]`, append closers if
-// positive delta. Bounded iterations so a catastrophically broken input
-// doesn't loop forever.
+// positive delta. Walks with the inString/escaped state machine so literal
+// braces/brackets inside JSON string values are not counted as structural —
+// matches the invariant stripTrailingCommas adopted in BH-2026-05-10-003.
+// Bounded iterations so a catastrophically broken input doesn't loop forever.
 function balanceBraces(s: string, maxIter: number): string {
   let out = s;
   for (let i = 0; i < maxIter; i++) {
     let braceDelta = 0;
     let bracketDelta = 0;
+    let inString = false;
+    let escaped = false;
     for (let j = 0; j < out.length; j++) {
       const ch = out.charCodeAt(j);
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === 0x5c /* \ */) {
+        escaped = true;
+        continue;
+      }
+      if (ch === 0x22 /* " */) {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
       if (ch === 0x7b) braceDelta++;
       else if (ch === 0x7d) braceDelta--;
       else if (ch === 0x5b) bracketDelta++;
       else if (ch === 0x5d) bracketDelta--;
     }
-    if (braceDelta <= 0 && bracketDelta <= 0) break;
+    // An unterminated string itself blocks structural recovery; close it
+    // before adding bracket/brace closers so the appended closers don't end
+    // up swallowed inside the open string value.
+    if (inString) out += '"';
+    if (braceDelta <= 0 && bracketDelta <= 0 && !inString) break;
     // Append needed closers — brackets before braces for nesting correctness.
     if (bracketDelta > 0) out += "]".repeat(bracketDelta);
     if (braceDelta > 0) out += "}".repeat(braceDelta);
@@ -157,13 +213,36 @@ function balanceBraces(s: string, maxIter: number): string {
 
 // Drop excess closers when the delta is negative (more closes than opens).
 // Walks once tracking depth; a `}` or `]` with no matching open is dropped.
+// Same inString/escaped walker as the other repair stages so literal braces
+// or brackets inside JSON string values pass through untouched.
 function stripExcessClosers(s: string): string {
   let braceDepth = 0;
   let bracketDepth = 0;
+  let inString = false;
+  let escaped = false;
   let out = "";
   for (let i = 0; i < s.length; i++) {
     const ch = s.charCodeAt(i);
     const charStr = s[i] as string;
+    if (escaped) {
+      out += charStr;
+      escaped = false;
+      continue;
+    }
+    if (ch === 0x5c /* \ */) {
+      escaped = true;
+      out += charStr;
+      continue;
+    }
+    if (ch === 0x22 /* " */) {
+      inString = !inString;
+      out += charStr;
+      continue;
+    }
+    if (inString) {
+      out += charStr;
+      continue;
+    }
     if (ch === 0x7b) {
       braceDepth++;
       out += charStr;

@@ -4,7 +4,6 @@ import { logger } from "../logger.js";
 import {
   appendRule,
   type PermissionAction,
-  type PermissionRule,
   type RuleMap,
   sortRulesInPlace,
 } from "./policy.js";
@@ -100,32 +99,4 @@ export async function persistProjectRule(
     delete (next.permissions as { alwaysAllowed?: string[] }).alwaysAllowed;
   }
   await atomicWriteJson(path, next);
-}
-
-export async function loadProjectAllowList(cwd: string): Promise<{
-  rules: RuleMap;
-  hasLegacy: boolean;
-}> {
-  const path = getProjectSettingsPath(cwd);
-  const out: RuleMap = new Map();
-  if (!(await fileExists(path))) return { rules: out, hasLegacy: false };
-  let data: ProjectSettings;
-  try {
-    data = await readJsonFile<ProjectSettings>(path);
-  } catch {
-    return { rules: out, hasLegacy: false };
-  }
-  const hasLegacy = Array.isArray(data.permissions?.alwaysAllowed);
-  out.clear();
-  for (const [tool, list] of (await loadProjectRules(cwd)).entries()) {
-    out.set(tool, list);
-  }
-  return { rules: out, hasLegacy };
-}
-
-export function ruleListForTool(
-  rules: RuleMap,
-  toolName: string,
-): PermissionRule[] {
-  return rules.get(toolName) ?? [];
 }

@@ -1,5 +1,5 @@
-import { Fragment, type ReactElement, type ReactNode } from "react";
 import { Text } from "ink";
+import { Fragment, type ReactElement, type ReactNode } from "react";
 
 export type InlineSegment =
   | { kind: "text"; text: string }
@@ -127,6 +127,7 @@ function renderInlineNodes(line: string, keyBase: string): ReactNode[] {
           </Text>
         );
     }
+    return null;
   });
 }
 

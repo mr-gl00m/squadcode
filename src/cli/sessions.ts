@@ -29,7 +29,9 @@ export async function runSessionsCli(input: SessionsCliInput): Promise<void> {
       }
       const rootCwd = filter.cwd;
       if (rootCwd) {
-        process.stdout.write(`sessions for cwd: ${sanitizeForTerminal(rootCwd)}\n`);
+        process.stdout.write(
+          `sessions for cwd: ${sanitizeForTerminal(rootCwd)}\n`,
+        );
       } else {
         process.stdout.write("sessions across all cwds\n");
       }
@@ -55,7 +57,9 @@ export async function runSessionsCli(input: SessionsCliInput): Promise<void> {
     }
 
     const { metadata, records } = await store.read(input.id);
-    process.stdout.write(`session ${sanitizeForTerminal(metadata.sessionId)}\n`);
+    process.stdout.write(
+      `session ${sanitizeForTerminal(metadata.sessionId)}\n`,
+    );
     process.stdout.write(
       `started: ${sanitizeForTerminal(metadata.startedAt)}  updated: ${sanitizeForTerminal(metadata.updatedAt)}\n`,
     );
@@ -105,7 +109,8 @@ function renderRecord(r: SessionRecord): void {
     case "tool_result": {
       r.payload.toolName = sanitizeForTerminal(r.payload.toolName);
       r.payload.content = sanitizeForTerminal(r.payload.content);
-      if (r.payload.error) r.payload.error = sanitizeForTerminal(r.payload.error);
+      if (r.payload.error)
+        r.payload.error = sanitizeForTerminal(r.payload.error);
       const tag = r.payload.ok ? "ok" : (r.payload.error ?? "failed");
       process.stdout.write(
         `\n[tool · ${r.payload.toolName} · ${tag}]\n${r.payload.content}\n`,

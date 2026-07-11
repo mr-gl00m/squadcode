@@ -1,17 +1,24 @@
+import {
+  type ContextFragment,
+  ContextFragmentAccumulator,
+} from "../context/fragment.js";
+import type { HookRunner } from "../hooks/runner.js";
+import { hookResultsFragment } from "../hooks/runner.js";
 import { logger } from "../logger.js";
-import { deriveScopePattern } from "../permissions/match.js";
+import { deriveScopePatterns } from "../permissions/match.js";
 import {
   appendRule,
   decideAction,
-  mergeRules,
   type PolicyConfig,
   type RuleMap,
+  sensitiveLayer,
 } from "../permissions/policy.js";
 import {
-  promptForPermission,
   type PromptOutcome,
   type PromptRequest,
+  promptForPermission,
 } from "../permissions/prompt.js";
+import { toolOutputMessage } from "../prompts/boundary.js";
 import type {
   CanonicalEvent,
   CanonicalMessage,
@@ -19,12 +26,15 @@ import type {
   CanonicalToolCall,
   LLMProvider,
 } from "../providers/types.js";
-import type { HookRunner } from "../hooks/runner.js";
+import type { TurnDiffTracker } from "../sessions/trajectory-diff.js";
 import type { ArtifactRef } from "../sessions/types.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { PreviewResult, ToolResult } from "../tools/types.js";
 import type { YoloSession } from "../yolo/index.js";
-import { runTurn } from "./stream.js";
+import type { JobRegistry } from "./job-registry.js";
+import type { DiagnosticsTracker } from "./post-edit-diagnostics.js";
+import { runTurnWithRetry } from "./stream.js";
+import type { TimerRegistry } from "./timer-registry.js";
 
 export type AskPermissionFn = (req: PromptRequest) => Promise<PromptOutcome>;
 
@@ -46,11 +56,32 @@ export interface AgentLoopOptions {
   maxTurns?: number;
   sessionRules?: RuleMap;
   projectRules?: RuleMap;
+  userGlobalRules?: RuleMap;
   askPermission?: AskPermissionFn;
   offloadLargeOutput?: OffloadLargeOutputFn;
   hookRunner?: HookRunner;
   sessionId?: string;
   yolo?: YoloSession;
+  // Bypasses the Shell tool's always-on delete guard (user-set
+  // --dangerously-allow-deletes). Threaded into ToolContext for execute().
+  allowDeletes?: boolean;
+  // Long-running registries threaded into ToolContext so the Shell background
+  // mode and the job/timer tools can reach them. A subagent passes its own pair.
+  jobs?: JobRegistry;
+  timers?: TimerRegistry;
+  // Post-edit diagnostics tracker threaded into ToolContext so mutating file
+  // tools can record touched paths; the pre-turn injector drains it.
+  diagnostics?: DiagnosticsTracker;
+  // Receives committed Write/Edit/ApplyPatch mutations for the current user
+  // turn. Rendering uses these snapshots and never rereads the filesystem.
+  turnDiff?: TurnDiffTracker;
+  // Called at the top of each turn; any messages it returns are appended to the
+  // conversation before the request is built. This is the seam for pre-turn
+  // synthetic injection — expired timers ("timer fired"), finished background
+  // jobs, and post-edit diagnostics — without the loop itself depending on
+  // those registries. Returning [] (the common case) is a no-op. May be async
+  // (diagnostics parse files); sync injectors still work.
+  injectPreTurn?: () => ContextFragment[] | Promise<ContextFragment[]>;
 }
 
 const DEFAULT_MAX_TURNS = 25;
@@ -80,13 +111,22 @@ export async function* runAgentLoop(
   const messages = opts.messages;
   const sessionRules: RuleMap = opts.sessionRules ?? new Map();
   const projectRules: RuleMap = opts.projectRules ?? new Map();
+  const userGlobalRules: RuleMap = opts.userGlobalRules ?? new Map();
   const maxTurns = opts.maxTurns ?? DEFAULT_MAX_TURNS;
+  const fragmentAccumulator = new ContextFragmentAccumulator();
   const callStreaks = new Map<string, number>();
   let consecutiveFailures = 0;
   let consecutiveFailuresWarned = false;
 
   for (let turn = 0; turn < maxTurns; turn += 1) {
     if (opts.abort.aborted) return;
+
+    // Pre-turn synthetic injection: fired timers, finished background jobs,
+    // and post-edit diagnostics become messages the model sees before it acts
+    // this turn. No-op when nothing is pending.
+    if (opts.injectPreTurn) {
+      fragmentAccumulator.apply(messages, await opts.injectPreTurn());
+    }
 
     const req: CanonicalRequest = {
       model: opts.model,
@@ -100,7 +140,9 @@ export async function* runAgentLoop(
     let assistantReasoning = "";
     let errored = false;
 
-    for await (const ev of runTurn(opts.provider, req, opts.abort)) {
+    for await (const ev of runTurnWithRetry(opts.provider, req, {
+      signal: opts.abort,
+    })) {
       if (ev.type === "text_delta") assistantText += ev.text;
       if (ev.type === "reasoning_delta") assistantReasoning += ev.text;
       if (ev.type === "tool_call_done") {
@@ -113,7 +155,10 @@ export async function* runAgentLoop(
     if (errored) return;
 
     if (assistantText || pendingCalls.length > 0 || assistantReasoning) {
-      const msg: CanonicalMessage = { role: "assistant", content: assistantText };
+      const msg: CanonicalMessage = {
+        role: "assistant",
+        content: assistantText,
+      };
       if (pendingCalls.length > 0) msg.toolCalls = pendingCalls;
       if (assistantReasoning) msg.reasoningContent = assistantReasoning;
       messages.push(msg);
@@ -171,20 +216,26 @@ export async function* runAgentLoop(
       return;
     }
 
+    const hookFragments: ContextFragment[] = [];
     let callIndex = 0;
     for (; callIndex < pendingCalls.length; callIndex += 1) {
       if (opts.abort.aborted) break;
       const call = pendingCalls[callIndex]!;
       if (opts.hookRunner && opts.sessionId) {
         try {
-          await opts.hookRunner.fire({
+          const hookContext = {
             event: "PreToolUse",
             sessionId: opts.sessionId,
             cwd: opts.cwd,
             toolName: call.name,
             args: call.args,
             callId: call.id,
-          });
+          } as const;
+          const hookResults = await opts.hookRunner.fire(hookContext);
+          const hookFragment = hookResultsFragment(hookResults, hookContext);
+          if (hookFragment) {
+            hookFragments.push(hookFragment);
+          }
         } catch (err: unknown) {
           logger.warn(
             { err: err instanceof Error ? err.message : String(err) },
@@ -197,10 +248,12 @@ export async function* runAgentLoop(
         opts,
         sessionRules,
         projectRules,
+        userGlobalRules,
       );
+      if (result.mutations) opts.turnDiff?.record(result.mutations);
       if (opts.hookRunner && opts.sessionId) {
         try {
-          await opts.hookRunner.fire({
+          const hookContext = {
             event: result.ok ? "PostToolUse" : "PostToolUseFailure",
             sessionId: opts.sessionId,
             cwd: opts.cwd,
@@ -209,7 +262,12 @@ export async function* runAgentLoop(
             callId: call.id,
             ok: result.ok,
             ...(result.error !== undefined && { error: result.error }),
-          });
+          } as const;
+          const hookResults = await opts.hookRunner.fire(hookContext);
+          const hookFragment = hookResultsFragment(hookResults, hookContext);
+          if (hookFragment) {
+            hookFragments.push(hookFragment);
+          }
         } catch (err: unknown) {
           logger.warn(
             { err: err instanceof Error ? err.message : String(err) },
@@ -243,13 +301,15 @@ export async function* runAgentLoop(
       }
       const attrs: { ok: boolean; error?: string } = { ok: result.ok };
       if (result.error !== undefined) attrs.error = result.error;
-      const wrappedContent = wrapToolOutput(call.name, bodyContent, attrs);
-      messages.push({
-        role: "tool",
-        content: wrappedContent,
-        toolCallId: call.id,
-        toolName: call.name,
+      const toolMessage = toolOutputMessage({
+        name: call.name,
+        body: bodyContent,
+        ok: attrs.ok,
+        ...(attrs.error !== undefined && { error: attrs.error }),
+        callId: call.id,
       });
+      const wrappedContent = toolMessage.content;
+      messages.push(toolMessage);
       const resultEvent: CanonicalEvent = {
         type: "tool_result",
         id: call.id,
@@ -291,6 +351,7 @@ export async function* runAgentLoop(
             pendingCalls.slice(callIndex + 1),
             "REPEATED_TOOL_FAILURES",
           );
+          fragmentAccumulator.apply(messages, hookFragments);
           yield {
             type: "error",
             code: "REPEATED_TOOL_FAILURES",
@@ -309,8 +370,10 @@ export async function* runAgentLoop(
         pendingCalls.slice(callIndex),
         "ABORTED",
       );
+      fragmentAccumulator.apply(messages, hookFragments);
       return;
     }
+    fragmentAccumulator.apply(messages, hookFragments);
   }
 
   logger.warn({ maxTurns }, "agent loop hit max_turns");
@@ -329,6 +392,7 @@ async function runOneToolCall(
   opts: AgentLoopOptions,
   sessionRules: RuleMap,
   projectRules: RuleMap,
+  userGlobalRules: RuleMap,
 ): Promise<{ result: ToolResult; reason: ToolResultReason }> {
   const tool = opts.registry.get(call.name);
   if (!tool) {
@@ -342,9 +406,19 @@ async function runOneToolCall(
     };
   }
 
+  // Precedence stack, highest first: sensitive defaults (the un-overridable
+  // floor) > this-session [A] grants > project [P] rules > user-global [U]
+  // rules > cli --allowed/--disallowed. decideAction stops at the first layer
+  // that matches; deny wins within a layer.
   const effectivePolicy: PolicyConfig = {
     ...opts.policy,
-    rules: mergeRules(sessionRules, projectRules, opts.policy.rules),
+    layers: [
+      sensitiveLayer(),
+      sessionRules,
+      projectRules,
+      userGlobalRules,
+      opts.policy.rules,
+    ],
   };
   const action = decideAction(
     tool.name,
@@ -352,10 +426,11 @@ async function runOneToolCall(
     call.args,
     effectivePolicy,
   );
-  const scopePattern = deriveScopePattern(tool.name, call.args);
+  const scopePatterns = deriveScopePatterns(tool.name, call.args);
+  const scopePattern = scopePatterns[0] ?? "*";
 
   let allowed: boolean;
-  let executeMetadata: unknown = undefined;
+  let executeMetadata: unknown;
   if (action === "deny") {
     allowed = false;
   } else if (action === "allow") {
@@ -383,19 +458,17 @@ async function runOneToolCall(
       callId: call.id,
       argsPreview: preview?.display ?? previewArgs(call.args),
       scopePattern,
+      scopePatterns,
     });
     if (preview) executeMetadata = preview.metadata;
     if (outcome === "always-allow") {
-      appendRule(sessionRules, tool.name, {
-        pattern: scopePattern,
-        action: "allow",
-      });
+      appendAllowRules(sessionRules, tool.name, scopePatterns);
       allowed = true;
     } else if (outcome === "always-project") {
-      appendRule(projectRules, tool.name, {
-        pattern: scopePattern,
-        action: "allow",
-      });
+      appendAllowRules(projectRules, tool.name, scopePatterns);
+      allowed = true;
+    } else if (outcome === "always-user") {
+      appendAllowRules(userGlobalRules, tool.name, scopePatterns);
       allowed = true;
     } else {
       allowed = outcome === "allow";
@@ -425,13 +498,20 @@ async function runOneToolCall(
         signal: opts.abort,
         callId: call.id,
         ...(opts.yolo && { yolo: opts.yolo }),
+        ...(opts.allowDeletes && { allowDeletes: true }),
+        ...(opts.jobs && { jobs: opts.jobs }),
+        ...(opts.timers && { timers: opts.timers }),
+        ...(opts.diagnostics && { diagnostics: opts.diagnostics }),
       },
       executeMetadata,
     );
     return { result, reason: "executed" };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.warn({ tool: tool.name, callId: call.id, err: message }, "tool error");
+    logger.warn(
+      { tool: tool.name, callId: call.id, err: message },
+      "tool error",
+    );
     const aborted = opts.abort.aborted;
     return {
       result: {
@@ -444,8 +524,14 @@ async function runOneToolCall(
   }
 }
 
-function escapeForMarker(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function appendAllowRules(
+  rules: RuleMap,
+  toolName: string,
+  scopePatterns: string[],
+): void {
+  for (const pattern of scopePatterns) {
+    appendRule(rules, toolName, { pattern, action: "allow" });
+  }
 }
 
 function satisfyUnfulfilledCalls(
@@ -460,12 +546,15 @@ function satisfyUnfulfilledCalls(
         ? "tool call not executed: agent loop aborted (consecutive tool failures)"
         : "tool call not executed: agent loop aborted";
   for (const call of calls) {
-    messages.push({
-      role: "tool",
-      content: wrapToolOutput(call.name, body, { ok: false, error: errorCode }),
-      toolCallId: call.id,
-      toolName: call.name,
-    });
+    messages.push(
+      toolOutputMessage({
+        name: call.name,
+        body,
+        ok: false,
+        error: errorCode,
+        callId: call.id,
+      }),
+    );
   }
 }
 
@@ -483,16 +572,6 @@ function canonicalStringify(value: unknown): string {
 
 function callSignature(call: CanonicalToolCall): string {
   return `${call.name} ${canonicalStringify(call.args)}`;
-}
-
-function wrapToolOutput(
-  name: string,
-  body: string,
-  attrs: { ok: boolean; error?: string },
-): string {
-  const okAttr = attrs.ok ? ' ok="true"' : ' ok="false"';
-  const errAttr = attrs.error ? ` error="${attrs.error}"` : "";
-  return `<TOOL_OUTPUT tool="${name}"${okAttr}${errAttr}>\n${escapeForMarker(body)}\n</TOOL_OUTPUT>`;
 }
 
 function previewArgs(args: unknown): string {

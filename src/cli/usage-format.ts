@@ -1,8 +1,5 @@
 import { formatCost } from "../pricing.js";
-import type {
-  UsageGroupRow,
-  UsageTotals,
-} from "../sessions/usage-ledger.js";
+import type { UsageGroupRow, UsageTotals } from "../sessions/usage-ledger.js";
 
 export interface UsageReport {
   totals: UsageTotals;
@@ -82,11 +79,17 @@ export function formatUsageReport(
   return lines.join("\n");
 }
 
-function missTokens(t: { inputTokens: number; cachedInputTokens: number }): number {
+function missTokens(t: {
+  inputTokens: number;
+  cachedInputTokens: number;
+}): number {
   return Math.max(0, t.inputTokens - t.cachedInputTokens);
 }
 
-function cachePct(t: { inputTokens: number; cachedInputTokens: number }): number {
+function cachePct(t: {
+  inputTokens: number;
+  cachedInputTokens: number;
+}): number {
   if (t.inputTokens <= 0) return 0;
   return Math.round((t.cachedInputTokens / t.inputTokens) * 100);
 }
