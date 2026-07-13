@@ -630,6 +630,21 @@ function gitIsReadOnly(args: readonly ParsedShellToken[]): boolean {
   ) {
     return false;
   }
+  // Options that make an otherwise read-only subcommand write a file or run a
+  // command: `git diff --output=<file>` opens and truncates the file even on an
+  // empty diff; `git grep --open-files-in-pager=<cmd>` launches a command on
+  // matches. gitIsReadOnly otherwise only inspects global options + subcommand.
+  if (
+    values.some(
+      (value) =>
+        value === "--output" ||
+        value.startsWith("--output=") ||
+        value === "--open-files-in-pager" ||
+        value.startsWith("--open-files-in-pager="),
+    )
+  ) {
+    return false;
+  }
   if (values[0] === "--version") return values.length === 1;
   let index = 0;
   while (values[index]?.startsWith("-")) {
@@ -656,6 +671,8 @@ function commandFlagsAreReadOnly(
         "-okdir",
         "-delete",
         "-fprint",
+        "-fprint0",
+        "-fprintf",
         "-fls",
       ].includes(value),
     );

@@ -79,6 +79,7 @@ export interface RuntimeCliConfig {
   dangerouslySkipReadPermissions?: boolean;
   dangerouslyAllowDeletes?: boolean;
   yolo?: boolean;
+  notificationSound?: boolean;
 }
 
 export interface LoadedConfiguration {
@@ -263,7 +264,10 @@ export function buildConfigurationStack(input: {
       ? [settingsLayer(recapIdleMinutes, input.settings)]
       : []),
   ]);
-  const notifications = normalizeNotifications(input.settings);
+  const notifications = normalizeNotifications(
+    input.settings,
+    input.cli.notificationSound,
+  );
   stack.add("settings.notifications.program", [
     {
       origin: "schema-default",
@@ -292,6 +296,24 @@ export function buildConfigurationStack(input: {
     },
     ...(input.settings.notifications?.terminalMethod !== undefined
       ? [settingsLayer(notifications.terminalMethod, input.settings)]
+      : []),
+  ]);
+  stack.add("settings.notifications.permissionSound", [
+    {
+      origin: "schema-default",
+      source: "built-in permission notification default",
+      value: true,
+    },
+    ...(input.settings.notifications?.permissionSound !== undefined
+      ? [
+          settingsLayer(
+            input.settings.notifications.permissionSound,
+            input.settings,
+          ),
+        ]
+      : []),
+    ...(input.cli.notificationSound !== undefined
+      ? [cliLayer("--notification-sound", input.cli.notificationSound)]
       : []),
   ]);
 
@@ -518,7 +540,10 @@ function validRecapMinutes(value: unknown): number {
     : DEFAULT_RECAP_IDLE_MINUTES;
 }
 
-function normalizeNotifications(settings: SquadSettings): NotificationConfig {
+function normalizeNotifications(
+  settings: SquadSettings,
+  cliSound?: boolean,
+): NotificationConfig {
   const raw = settings.notifications;
   const program =
     typeof raw?.program === "string" && raw.program.trim().length > 0
@@ -536,6 +561,7 @@ function normalizeNotifications(settings: SquadSettings): NotificationConfig {
     ...(program && { program }),
     terminalMode,
     terminalMethod,
+    permissionSound: cliSound ?? raw?.permissionSound ?? true,
   };
 }
 

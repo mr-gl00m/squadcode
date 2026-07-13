@@ -4,6 +4,7 @@ import { createLlmChatProvider } from "./llm-chat.js";
 import { createLlmLocalProvider } from "./llm-local.js";
 import { createLlmMessageProvider } from "./llm-message.js";
 import { createLlmResponseProvider } from "./llm-response.js";
+import { wrapProviderWithProseRecovery } from "./prose-tool-recovery.js";
 import { createRouterProvider, type ModelResolver } from "./router.js";
 import type { LLMProvider } from "./types.js";
 
@@ -63,6 +64,20 @@ export function dispatchProvider(
   entry: ModelEntry,
   env: DispatchEnv,
   opts: DispatchOptions = {},
+): LLMProvider | string {
+  const provider = dispatchProviderRaw(entry, env, opts);
+  if (typeof provider === "string") return provider;
+  // Prose tool-call recovery is a local-model compatibility layer applied to
+  // the API-backed adapters. A router delegates to a model that is itself
+  // dispatched (and so already wrapped); external-cli does its own parsing.
+  if (entry.kind === "router" || entry.kind === "external-cli") return provider;
+  return wrapProviderWithProseRecovery(provider);
+}
+
+function dispatchProviderRaw(
+  entry: ModelEntry,
+  env: DispatchEnv,
+  opts: DispatchOptions,
 ): LLMProvider | string {
   const baseUrl = resolvedBaseUrl(entry, env);
 

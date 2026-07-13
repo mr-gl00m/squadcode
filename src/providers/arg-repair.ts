@@ -15,8 +15,6 @@
 
 const MAX_ARG_LEN = 1024 * 1024;
 
-const BALANCE_MAX_ITER = 50;
-
 export class ArgRepairError extends Error {
   constructor(message: string) {
     super(message);
@@ -46,7 +44,7 @@ export function repairToolArgs(raw: string): unknown {
   const stage3 = tryParse(s);
   if (stage3.ok) return stage3.value;
 
-  s = balanceBraces(s, BALANCE_MAX_ITER);
+  s = balanceBraces(s);
   const stage4 = tryParse(s);
   if (stage4.ok) return stage4.value;
 
@@ -167,46 +165,50 @@ function stripTrailingCommas(s: string): string {
   return out;
 }
 
-// Balance braces and brackets: count `{`/`}` and `[`/`]`, append closers if
-// positive delta. Walks with the inString/escaped state machine so literal
-// braces/brackets inside JSON string values are not counted as structural —
-// matches the invariant stripTrailingCommas adopted in BH-2026-05-10-003.
-// Bounded iterations so a catastrophically broken input doesn't loop forever.
-function balanceBraces(s: string, maxIter: number): string {
-  let out = s;
-  for (let i = 0; i < maxIter; i++) {
-    let braceDelta = 0;
-    let bracketDelta = 0;
-    let inString = false;
-    let escaped = false;
-    for (let j = 0; j < out.length; j++) {
-      const ch = out.charCodeAt(j);
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (ch === 0x5c /* \ */) {
-        escaped = true;
-        continue;
-      }
-      if (ch === 0x22 /* " */) {
-        inString = !inString;
-        continue;
-      }
-      if (inString) continue;
-      if (ch === 0x7b) braceDelta++;
-      else if (ch === 0x7d) braceDelta--;
-      else if (ch === 0x5b) bracketDelta++;
-      else if (ch === 0x5d) bracketDelta--;
+// Balance braces and brackets by tracking the stack of unclosed structural
+// openers, then appending each opener's matching closer in LIFO (innermost
+// first) order. Counting `{`/`}` and `[`/`]` deltas separately loses nesting
+// order and mis-closes an object nested inside an array: `[{` would become the
+// invalid `[{]}` instead of `[{}]`, collapsing a recoverable partial to `{}`.
+// Walks with the inString/escaped state machine so literal braces/brackets
+// inside JSON string values are not counted as structural; matches the
+// invariant stripTrailingCommas adopted in BH-2026-05-10-003. A mismatched or
+// excess closer is left in place for stripExcessClosers to handle.
+function balanceBraces(s: string): string {
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (let j = 0; j < s.length; j++) {
+    const ch = s.charCodeAt(j);
+    if (escaped) {
+      escaped = false;
+      continue;
     }
-    // An unterminated string itself blocks structural recovery; close it
-    // before adding bracket/brace closers so the appended closers don't end
-    // up swallowed inside the open string value.
-    if (inString) out += '"';
-    if (braceDelta <= 0 && bracketDelta <= 0 && !inString) break;
-    // Append needed closers — brackets before braces for nesting correctness.
-    if (bracketDelta > 0) out += "]".repeat(bracketDelta);
-    if (braceDelta > 0) out += "}".repeat(braceDelta);
+    if (ch === 0x5c /* \ */) {
+      escaped = true;
+      continue;
+    }
+    if (ch === 0x22 /* " */) {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === 0x7b /* { */) stack.push("}");
+    else if (ch === 0x5b /* [ */) stack.push("]");
+    else if (ch === 0x7d /* } */) {
+      if (stack[stack.length - 1] === "}") stack.pop();
+    } else if (ch === 0x5d /* ] */) {
+      if (stack[stack.length - 1] === "]") stack.pop();
+    }
+  }
+  let out = s;
+  // An unterminated string itself blocks structural recovery; close it before
+  // adding structural closers so they don't end up swallowed inside the open
+  // string value.
+  if (inString) out += '"';
+  for (let k = stack.length - 1; k >= 0; k -= 1) {
+    const closer = stack[k];
+    if (closer !== undefined) out += closer;
   }
   return out;
 }

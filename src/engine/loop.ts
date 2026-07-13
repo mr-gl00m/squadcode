@@ -41,6 +41,7 @@ export type AskPermissionFn = (req: PromptRequest) => Promise<PromptOutcome>;
 export type OffloadLargeOutputFn = (args: {
   callId: string;
   toolName: string;
+  toolArgs: unknown;
   content: string;
 }) => Promise<{ content: string; artifact: ArtifactRef } | null>;
 
@@ -282,6 +283,7 @@ export async function* runAgentLoop(
           const off = await opts.offloadLargeOutput({
             callId: call.id,
             toolName: call.name,
+            toolArgs: call.args,
             content: result.content,
           });
           if (off) {
