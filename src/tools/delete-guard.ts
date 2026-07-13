@@ -23,6 +23,11 @@ const DELETE_VERBS_WIN = new Set([
   "unlink",
   "remove-item",
   "ri",
+  // `rd` and `rmdir` are default PowerShell aliases for Remove-Item (and cmd
+  // directory-removal built-ins); without them a `rd -Recurse -Force x` slips
+  // past the guard and deletes without archiving.
+  "rd",
+  "rmdir",
 ]);
 
 // Interpreters a delete can hide behind (`cmd /c del x`, `bash -c "rm x"`).
@@ -230,7 +235,12 @@ function segmentDeletes(segment: string, verbs: Set<string>): boolean {
 }
 
 function normalizeVerb(token: string): string {
-  const noPath = token.split(/[\\/]/).pop() ?? token;
+  // Strip surrounding quote characters before comparing. Whitespace tokenization
+  // leaves a leading quote on the first word of a quoted interpreter argument
+  // (`bash -c "rm -rf x"` -> token `"rm`), which would otherwise never match a
+  // delete verb and let the shell-out run the delete unarchived.
+  const unquoted = token.replace(/^['"`]+/, "").replace(/['"`]+$/, "");
+  const noPath = unquoted.split(/[\\/]/).pop() ?? unquoted;
   return noPath.replace(/\.(exe|cmd|bat|ps1|com)$/i, "").toLowerCase();
 }
 

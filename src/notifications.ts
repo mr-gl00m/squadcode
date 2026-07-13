@@ -9,6 +9,7 @@ export interface NotificationConfig {
   program?: string;
   terminalMode: TerminalNotificationMode;
   terminalMethod: TerminalNotificationMethod;
+  permissionSound: boolean;
 }
 
 export interface TurnCompletionPayload {

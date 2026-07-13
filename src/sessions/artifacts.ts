@@ -101,7 +101,8 @@ export function composeOffloadedContent(
   return (
     `${tail}\n` +
     `... (output truncated; full ${sizeKB}KB saved to ${ref.path})\n` +
-    `Read that file directly to see the rest. sha256=${ref.sha256.slice(0, 12)}`
+    `Read that file with offset and limit to inspect it in pages ` +
+    `(start with offset=1 limit=200). sha256=${ref.sha256.slice(0, 12)}`
   );
 }
 
@@ -153,9 +154,13 @@ export function makeOffloadLargeOutput(args: {
 }): (call: {
   callId: string;
   toolName: string;
+  toolArgs?: unknown;
   content: string;
 }) => Promise<{ content: string; artifact: ArtifactRef } | null> {
   return async (call) => {
+    // Re-offloading a sidecar Read creates a new pointer to identical content.
+    // Keep that Read inline under the central context-fragment cap instead.
+    if (isReadOfBoundArtifact(call, args)) return null;
     return await maybeOffload({
       sessionId: args.sessionId,
       callId: call.callId,
@@ -164,6 +169,25 @@ export function makeOffloadLargeOutput(args: {
       ...(args.baseDir !== undefined && { baseDir: args.baseDir }),
     });
   };
+}
+
+function isReadOfBoundArtifact(
+  call: { toolName: string; toolArgs?: unknown },
+  args: { sessionId: string; baseDir?: string },
+): boolean {
+  if (call.toolName !== "Read" || !isRecord(call.toolArgs)) return false;
+  const path = call.toolArgs.path;
+  if (typeof path !== "string") return false;
+  const baseDir = args.baseDir ?? SESSIONS_ROOT;
+  const dir = normalize(artifactDir(args.sessionId, baseDir));
+  const candidate = normalize(path);
+  const fold = (value: string): string =>
+    process.platform === "win32" ? value.toLowerCase() : value;
+  return fold(candidate).startsWith(`${fold(dir)}${sep}`);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // Used by the path validator to whitelist artifact reads. The check accepts

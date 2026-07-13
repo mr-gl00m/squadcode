@@ -58,13 +58,20 @@ export function checkYoloPathGuard(
       ];
       const escaped = candidates.find((candidate) => {
         const absolute = pathApi.isAbsolute(candidate);
+        // A Windows drive-relative path (`D:secrets.txt`, drive letter with no
+        // separator) is not absolute per isAbsolute and has no climb, but it
+        // resolves against that drive's current directory, outside cwd and not
+        // deterministically knowable. Reject it like an out-of-cwd path.
+        const driveRelative =
+          session.isWindows && /^[a-zA-Z]:(?![\\/])/.test(candidate);
         const climbs =
           candidate === ".." ||
           candidate.startsWith("../") ||
           candidate.startsWith("..\\") ||
           candidate.includes("/../") ||
           candidate.includes("\\..\\");
-        if (!absolute && !climbs) return false;
+        if (!absolute && !climbs && !driveRelative) return false;
+        if (driveRelative) return true;
         const resolved = absolute
           ? pathApi.resolve(candidate)
           : pathApi.resolve(session.cwd, candidate);

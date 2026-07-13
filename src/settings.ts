@@ -29,6 +29,8 @@ export interface SquadSettings {
     program?: string;
     terminalMode?: "off" | "unfocused" | "always";
     terminalMethod?: "osc9" | "bell";
+    // Bell emitted when the Ink REPL opens a permission prompt.
+    permissionSound?: boolean;
   };
   hooks?: unknown[];
   [key: string]: unknown;
@@ -88,6 +90,18 @@ export async function updateProjectTrust(
     projectTrust: {
       ...(settings.projectTrust ?? {}),
       [key]: { trusted, updatedAt: new Date().toISOString() },
+    },
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+export async function updatePermissionSound(enabled: boolean): Promise<void> {
+  const settings = await readSettings();
+  await atomicWriteJson(SETTINGS_PATH, {
+    ...settings,
+    notifications: {
+      ...(settings.notifications ?? {}),
+      permissionSound: enabled,
     },
     updatedAt: new Date().toISOString(),
   });
