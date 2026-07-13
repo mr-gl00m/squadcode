@@ -30,6 +30,7 @@ import {
 } from "./agent-panel-state.js";
 import { BANNER, bannerSubtitle } from "./banner.js";
 import { appendInputHistory, loadInputHistory } from "./input-history.js";
+import { usePermissionNotification } from "./permission-notification.js";
 import { useReplBacktrack } from "./repl-backtrack.js";
 import {
   ComposerLine,
@@ -58,12 +59,6 @@ import {
   type ReplOptions,
   snapshotTodos,
 } from "./repl-types.js";
-import {
-  BELL,
-  CLEAR_TITLE_SEQUENCE,
-  deriveTabTitle,
-  tabTitleSequence,
-} from "./tab-title.js";
 
 const ACCENT = "#7aa2f7";
 const VERSION = "1.9.0";
@@ -169,6 +164,12 @@ export function ReplApp(opts: ReplOptions): React.JSX.Element {
     req: PromptRequest;
     resolve: (outcome: PromptOutcome) => void;
   } | null>(null);
+  const permissionNotification = usePermissionNotification({
+    ...(stdout && { stdout }),
+    pending: pendingPermission !== null,
+    activityKind: activity.kind,
+    initialSoundEnabled: opts.notifications.permissionSound,
+  });
   useEffect(() => {
     let active = true;
     void loadInputHistory().then((loaded) => {
@@ -264,6 +265,8 @@ export function ReplApp(opts: ReplOptions): React.JSX.Element {
     setModel,
     setProviderName,
     setYoloOn,
+    notificationSoundEnabled: permissionNotification.soundEnabled,
+    setNotificationSound: permissionNotification.setSoundEnabled,
     skillsRef,
     store,
     systemPromptRef,
@@ -520,26 +523,6 @@ export function ReplApp(opts: ReplOptions): React.JSX.Element {
     stdout.on("resize", onResize);
     return () => {
       stdout.off("resize", onResize);
-    };
-  }, [stdout]);
-
-  const prevPendingPermissionRef = useRef(false);
-  useEffect(() => {
-    if (!stdout) return;
-    const isPending = pendingPermission !== null;
-    const title = deriveTabTitle({
-      pendingPermission: isPending,
-      activityKind: activity.kind,
-    });
-    const justEnteredPending = isPending && !prevPendingPermissionRef.current;
-    prevPendingPermissionRef.current = isPending;
-    stdout.write(tabTitleSequence(title));
-    if (justEnteredPending) stdout.write(BELL);
-  }, [activity.kind, pendingPermission, stdout]);
-
-  useEffect(() => {
-    return () => {
-      if (stdout) stdout.write(CLEAR_TITLE_SEQUENCE);
     };
   }, [stdout]);
 

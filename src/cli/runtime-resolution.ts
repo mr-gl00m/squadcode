@@ -24,7 +24,7 @@ import {
 import type { CanonicalMessage, LLMProvider } from "../providers/types.js";
 import type { SessionStore } from "../sessions/store.js";
 import type { SessionMetadata } from "../sessions/types.js";
-import { updateDefaultSelection } from "../settings.js";
+import { updateDefaultSelection, updatePermissionSound } from "../settings.js";
 import { sanitizeForTerminal } from "../terminal.js";
 import type { AgentToolHost } from "../tools/agent.js";
 import type { RootOptions } from "./program-options.js";
@@ -181,6 +181,15 @@ export function persistDefaultSelection(
     logger.warn(
       { err: err instanceof Error ? err.message : String(err) },
       "default model selection persist failed",
+    );
+  });
+}
+
+export function persistPermissionSound(enabled: boolean): void {
+  updatePermissionSound(enabled).catch((err: unknown) => {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "permission sound setting persist failed",
     );
   });
 }

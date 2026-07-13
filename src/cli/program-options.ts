@@ -1,3 +1,4 @@
+import { InvalidArgumentError } from "commander";
 import type { RuntimeCliConfig } from "../config/stack.js";
 
 export interface RootOptions {
@@ -21,6 +22,7 @@ export interface RootOptions {
   replay?: boolean | string;
   replayLimit?: number;
   shootout?: string;
+  notificationSound?: boolean;
 }
 
 export function runtimeCliConfig(opts: RootOptions): RuntimeCliConfig {
@@ -45,5 +47,15 @@ export function runtimeCliConfig(opts: RootOptions): RuntimeCliConfig {
       dangerouslyAllowDeletes: opts.dangerouslyAllowDeletes,
     }),
     ...(opts.yolo !== undefined && { yolo: opts.yolo }),
+    ...(opts.notificationSound !== undefined && {
+      notificationSound: opts.notificationSound,
+    }),
   };
+}
+
+export function parseOnOff(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "on") return true;
+  if (normalized === "off") return false;
+  throw new InvalidArgumentError('expected "on" or "off"');
 }

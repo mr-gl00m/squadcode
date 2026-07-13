@@ -20,6 +20,8 @@ export interface SlashContext {
   sessionList: () => string;
   yoloStatus?: () => string;
   toggleYolo?: () => Promise<string>;
+  notificationSoundEnabled?: () => boolean;
+  setNotificationSound?: (enabled: boolean) => void;
   getMode?: () => Mode;
   setMode?: (mode: Mode) => string;
   recap?: () => string;
@@ -70,6 +72,11 @@ export const SLASH_COMMANDS: readonly SlashCommandEntry[] = [
   { name: "compact", availableDuringTurn: false },
   { name: "provider", availableDuringTurn: false },
   { name: "model", availableDuringTurn: false },
+  {
+    name: "sound",
+    aliases: ["notification-sound"],
+    availableDuringTurn: true,
+  },
   { name: "yolo", availableDuringTurn: false },
   { name: "mode", availableDuringTurn: false },
   { name: "output-style", aliases: ["style"], availableDuringTurn: false },
@@ -91,6 +98,7 @@ export function slashAvailableDuringTurn(line: string): boolean {
 const HELP = [
   "/provider <name>      switch provider",
   "/model <name>         switch model for the next turn",
+  "/sound [on|off]       toggle the permission-request sound (alias: /notification-sound)",
   "/clear                reset the conversation history (prints a recap first)",
   "/receipt              print a markdown recap of this session (goal, files, shell, tokens, next action)",
   "/compact              summarize the conversation and replace history with the summary",
@@ -139,6 +147,23 @@ export function handleSlash(line: string, ctx: SlashContext): SlashResult {
           ? ` (${count} prior message${count === 1 ? "" : "s"} carried over)`
           : "";
       return { message: `model switched to ${arg}${carry}` };
+    }
+    case "sound":
+    case "notification-sound": {
+      if (!ctx.notificationSoundEnabled || !ctx.setNotificationSound) {
+        return { message: "/sound not available in this REPL mode" };
+      }
+      const normalized = arg.toLowerCase();
+      if (normalized && normalized !== "on" && normalized !== "off") {
+        return { message: `unknown sound state "${arg}"; use on or off` };
+      }
+      const enabled = normalized
+        ? normalized === "on"
+        : !ctx.notificationSoundEnabled();
+      ctx.setNotificationSound(enabled);
+      return {
+        message: `permission notification sound ${enabled ? "ON" : "OFF"} (saved globally)`,
+      };
     }
     case "clear": {
       // Recap before clear so the user always has a record of what was

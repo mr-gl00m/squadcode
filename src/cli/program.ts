@@ -6,7 +6,7 @@ import {
 } from "../sessions/shootout-store.js";
 import { openSessionStore } from "../sessions/store.js";
 import { runDoctor, verifyAuditChain } from "./doctor.js";
-import type { RootOptions } from "./program-options.js";
+import { parseOnOff, type RootOptions } from "./program-options.js";
 import { runPrintMode } from "./program-print.js";
 import { runReplMode } from "./program-repl.js";
 import {
@@ -70,6 +70,11 @@ export function buildProgram(): Command {
     .option(
       "--yolo",
       "YOLO mode: skip prompts and enable cwd path-guard + archive-on-delete + checklist rails (not OS isolation; REPL only; checklist.txt or CHECKLIST.md must exist in cwd)",
+    )
+    .option(
+      "--notification-sound <state>",
+      "permission-request sound for this invocation: on or off",
+      parseOnOff,
     )
     .option(
       "--mode <name>",

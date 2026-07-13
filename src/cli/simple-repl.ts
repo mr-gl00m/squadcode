@@ -11,6 +11,7 @@ import {
 } from "../guardian.js";
 import type { HookRunner } from "../hooks/runner.js";
 import { logger } from "../logger.js";
+import type { NotificationConfig } from "../notifications.js";
 import { loadUserGlobalRules, persistUserRule } from "../permissions/global.js";
 import { applyModeAddendums, type Mode } from "../permissions/plan.js";
 import type { PolicyConfig, RuleMap } from "../permissions/policy.js";
@@ -34,7 +35,6 @@ import { makeOffloadLargeOutput } from "../sessions/artifacts.js";
 import { formatRecapFromMessages } from "../sessions/recap.js";
 import type { SessionStore } from "../sessions/store.js";
 import type { SessionMetadata } from "../sessions/types.js";
-import { updateDefaultSelection } from "../settings.js";
 import { sanitizeForTerminal } from "../terminal.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { checklistMissingMessage, findChecklist } from "../yolo/checklist.js";
@@ -49,6 +49,10 @@ import { createPrintState, renderEvent } from "./print.js";
 import { parseUsageArgs } from "./repl.js";
 import { formatReplay, parseReplayLimit } from "./replay.js";
 import { pickResumeTarget } from "./resume-target.js";
+import {
+  persistDefaultSelection,
+  persistPermissionSound,
+} from "./runtime-resolution.js";
 import { handleSlash, type SlashContext } from "./slash.js";
 import { formatUsageReport } from "./usage-format.js";
 
@@ -74,6 +78,7 @@ export interface SimpleReplOptions {
   hookRunner: HookRunner;
   yolo: YoloSession | null;
   allowDeletes: boolean;
+  notifications: NotificationConfig;
   jobs?: JobRegistry;
   timers?: TimerRegistry;
   diagnostics?: DiagnosticsSetup;
@@ -95,6 +100,7 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
   let yolo: YoloSession | null = opts.yolo;
   let systemPrompt = opts.systemPrompt;
   let policy = opts.policy;
+  let notificationSound = opts.notifications.permissionSound;
   const basePolicy = { ...opts.policy, dangerouslySkipPermissions: false };
 
   const rl = createInterface({
@@ -134,6 +140,11 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
     activeStyleName: () => null,
     setStyle: () => "output styles are only available in the interactive REPL",
     clearStyle: () => undefined,
+    notificationSoundEnabled: () => notificationSound,
+    setNotificationSound: (enabled) => {
+      notificationSound = enabled;
+      persistPermissionSound(enabled);
+    },
     costSummary: () => {
       const lines = [
         `provider/model:  ${providerName}/${model}`,
@@ -474,13 +485,4 @@ export async function runSimpleRepl(opts: SimpleReplOptions): Promise<void> {
   }
 
   rl.close();
-}
-
-function persistDefaultSelection(providerName: string, model: string): void {
-  updateDefaultSelection(providerName, model).catch((err: unknown) => {
-    logger.warn(
-      { err: err instanceof Error ? err.message : String(err) },
-      "default model selection persist failed",
-    );
-  });
 }

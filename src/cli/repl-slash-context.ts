@@ -19,7 +19,10 @@ import {
 import { parseUsageArgs } from "./repl-composer.js";
 import { formatReplay, parseReplayLimit } from "./replay.js";
 import { pickResumeTarget } from "./resume-target.js";
-import { persistDefaultSelection } from "./runtime-resolution.js";
+import {
+  persistDefaultSelection,
+  persistPermissionSound,
+} from "./runtime-resolution.js";
 import type { SlashContext } from "./slash.js";
 import { formatUsageReport } from "./usage-format.js";
 
@@ -45,6 +48,8 @@ export interface ReplSlashContextOptions {
   setModel: Dispatch<SetStateAction<string>>;
   setProviderName: Dispatch<SetStateAction<string>>;
   setYoloOn: Dispatch<SetStateAction<boolean>>;
+  notificationSoundEnabled: boolean;
+  setNotificationSound: (enabled: boolean) => void;
   skillsRef: MutableRefObject<Map<string, SkillEntry>>;
   store: SessionStore;
   systemPromptRef: MutableRefObject<string>;
@@ -99,6 +104,11 @@ export function createReplSlashContext(
       return null;
     },
     clearStyle: () => opts.setActiveStyle(null),
+    notificationSoundEnabled: () => opts.notificationSoundEnabled,
+    setNotificationSound: (enabled: boolean) => {
+      opts.setNotificationSound(enabled);
+      persistPermissionSound(enabled);
+    },
     usageReport: (arg: string) => usageReport(opts, arg),
     costSummary: () => costSummary(opts),
     toolList: () => {
