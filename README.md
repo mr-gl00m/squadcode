@@ -178,7 +178,7 @@ Not an IDE plugin or a hosted product. Squad Code's job is vetting models (local
 If you find this useful, consider supporting me and my research:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/mr_gl00m)
-[![GitHub Sponsors](https://img.shields.io/badge/GitHub_Sponsors-EA4AAA?style=for-the-badge&logo=github&logoColor=white)](https://ko-fi.com/mr_gl00m)
+[![GitHub Sponsors](https://img.shields.io/badge/GitHub_Sponsors-EA4AAA?style=for-the-badge&logo=github&logoColor=white)]([https://ko-fi.com/mr_gl00m](https://github.com/sponsors/mr-gl00m))
 
 **Crypto:**
 - BTC: `bc1qnedeq3dr2dmlwgmw2mr5mtpxh45uhl395prr0d`
