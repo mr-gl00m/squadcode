@@ -90,6 +90,7 @@ describe("active-turn slash commands", () => {
     expect(slashAvailableDuringTurn("/diff")).toBe(true);
     expect(slashAvailableDuringTurn("/usage cwd 7")).toBe(true);
     expect(slashAvailableDuringTurn("/list-skills")).toBe(true);
+    expect(slashAvailableDuringTurn("/sound off")).toBe(true);
   });
 
   it("blocks commands that mutate or replace REPL state", () => {
@@ -97,5 +98,48 @@ describe("active-turn slash commands", () => {
     expect(slashAvailableDuringTurn("/compact")).toBe(false);
     expect(slashAvailableDuringTurn("/quit")).toBe(false);
     expect(slashAvailableDuringTurn("/unknown")).toBe(false);
+  });
+});
+
+describe("/sound slash command", () => {
+  it("toggles the current permission sound when no state is given", () => {
+    let enabled = true;
+    const ctx = makeCtx({
+      notificationSoundEnabled: () => enabled,
+      setNotificationSound: (next) => {
+        enabled = next;
+      },
+    });
+    expect(handleSlash("/sound", ctx).message).toContain("OFF");
+    expect(enabled).toBe(false);
+  });
+
+  it("accepts explicit states and the long alias", () => {
+    let enabled = false;
+    const ctx = makeCtx({
+      notificationSoundEnabled: () => enabled,
+      setNotificationSound: (next) => {
+        enabled = next;
+      },
+    });
+    expect(handleSlash("/notification-sound on", ctx).message).toContain("ON");
+    expect(enabled).toBe(true);
+    expect(handleSlash("/sound off", ctx).message).toContain("OFF");
+    expect(enabled).toBe(false);
+  });
+
+  it("rejects unknown states without changing the setting", () => {
+    let changed = false;
+    const result = handleSlash(
+      "/sound maybe",
+      makeCtx({
+        notificationSoundEnabled: () => true,
+        setNotificationSound: () => {
+          changed = true;
+        },
+      }),
+    );
+    expect(result.message).toContain("use on or off");
+    expect(changed).toBe(false);
   });
 });

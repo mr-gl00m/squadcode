@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { permissionNotificationSequence } from "../src/cli/permission-notification.js";
 import {
   BELL,
   CLEAR_TITLE_SEQUENCE,
@@ -48,5 +49,39 @@ describe("constants", () => {
 
   it("CLEAR_TITLE_SEQUENCE writes an empty OSC 2 string", () => {
     expect(CLEAR_TITLE_SEQUENCE).toBe("\x1b]2;\x07");
+  });
+});
+
+describe("permission notification sequence", () => {
+  it("rings once when a permission first becomes pending", () => {
+    expect(
+      permissionNotificationSequence({
+        pending: true,
+        wasPending: false,
+        activityKind: "tool",
+        soundEnabled: true,
+      }),
+    ).toBe(`${tabTitleSequence("Squad ▸ Permission needed")}${BELL}`);
+  });
+
+  it("updates the title without ringing when sound is off", () => {
+    expect(
+      permissionNotificationSequence({
+        pending: true,
+        wasPending: false,
+        activityKind: "tool",
+        soundEnabled: false,
+      }),
+    ).toBe(tabTitleSequence("Squad ▸ Permission needed"));
+  });
+
+  it("does not ring again while the same permission stays pending", () => {
+    const sequence = permissionNotificationSequence({
+      pending: true,
+      wasPending: true,
+      activityKind: "tool",
+      soundEnabled: true,
+    });
+    expect(sequence).toBe(tabTitleSequence("Squad ▸ Permission needed"));
   });
 });

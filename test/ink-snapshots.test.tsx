@@ -3,7 +3,17 @@ import { describe, expect, it } from "vitest";
 import { AgentPanel, KillPicker } from "../src/cli/agent-panel.js";
 import { emptyPanelState, reducePanels } from "../src/cli/agent-panel-state.js";
 import { PermissionOverlay, StatusFooter } from "../src/cli/repl.js";
-import { BacktrackOverlay } from "../src/cli/repl-presentation.js";
+import {
+  BacktrackOverlay,
+  ToolLedgerView,
+} from "../src/cli/repl-presentation.js";
+import {
+  ledgerDelta,
+  ledgerResult,
+  ledgerRun,
+  ledgerStart,
+  type ToolCallRecord,
+} from "../src/cli/tool-ledger.js";
 
 function populatedPanel() {
   return reducePanels(emptyPanelState(4), [
@@ -49,8 +59,53 @@ describe("Ink regression snapshots", () => {
         totalCost={0.084}
         pendingPermission={false}
         isStreaming
+        viewMode="compact"
       />,
     );
+    expect(view.lastFrame()).toMatchSnapshot();
+  });
+
+  it("pins the compact tool ledger window", () => {
+    const done = (
+      ledger: readonly ToolCallRecord[],
+      id: string,
+      name: string,
+      preview: string,
+      result: Parameters<typeof ledgerResult>[3],
+    ): readonly ToolCallRecord[] =>
+      ledgerResult(
+        ledgerRun(ledgerStart(ledger, id, name), id, name, preview),
+        id,
+        name,
+        result,
+      );
+    let ledger: readonly ToolCallRecord[] = [];
+    ledger = done(ledger, "c1", "Shell", "ran git log --oneline -20", {
+      ok: true,
+    });
+    ledger = done(ledger, "c2", "Glob", "matched **/*parser*", { ok: true });
+    ledger = done(ledger, "c3", "Grep", "searched (?i)parser|parse", {
+      ok: false,
+      error: "GREP_BAD_REGEX",
+    });
+    ledger = done(ledger, "c4", "Read", "read sigil_llm_adapter.py", {
+      ok: true,
+    });
+    ledger = done(ledger, "c5", "Shell", "ran git diff --stat HEAD~3..HEAD", {
+      ok: true,
+    });
+    ledger = done(ledger, "c6", "Shell", "ran rm -rf build", {
+      ok: false,
+      reason: "denied",
+    });
+    ledger = ledgerRun(
+      ledgerStart(ledger, "c7", "Shell"),
+      "c7",
+      "Shell",
+      "ran git log --all --oneline -30",
+    );
+    ledger = ledgerDelta(ledgerStart(ledger, "c8", "Grep"), "c8", 46);
+    const view = render(<ToolLedgerView ledger={ledger} />);
     expect(view.lastFrame()).toMatchSnapshot();
   });
 

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -112,6 +112,7 @@ describe("composeOffloadedContent", () => {
     expect(out).toContain("/abs/foo.txt");
     expect(out).toContain("sha256=deadbeefdead");
     expect(out).toContain("12.1KB");
+    expect(out).toContain("offset=1 limit=200");
   });
 });
 
@@ -180,6 +181,48 @@ describe("makeOffloadLargeOutput", () => {
     });
     expect(big).not.toBeNull();
     expect(big!.artifact.path).toBe(artifactPath("bound", "c2", baseDir));
+  });
+
+  it("does not offload a Read of its own session artifact again", async () => {
+    const baseDir = await tempBaseDir();
+    const fn = makeOffloadLargeOutput({
+      sessionId: "bound",
+      baseDir,
+      threshold: 4,
+    });
+    const original = await fn({
+      callId: "glob-call",
+      toolName: "Glob",
+      toolArgs: { pattern: "**/*.md" },
+      content: "one.md\ntwo.md\nthree.md",
+    });
+    expect(original).not.toBeNull();
+    if (!original) throw new Error("expected Glob output to be offloaded");
+
+    const repeated = await fn({
+      callId: "read-call",
+      toolName: "Read",
+      toolArgs: { path: original.artifact.path },
+      content: "one.md\ntwo.md\nthree.md",
+    });
+    expect(repeated).toBeNull();
+    expect(await readdir(artifactDir("bound", baseDir))).toHaveLength(1);
+  });
+
+  it("still offloads a large Read outside the bound artifact directory", async () => {
+    const baseDir = await tempBaseDir();
+    const fn = makeOffloadLargeOutput({
+      sessionId: "bound",
+      baseDir,
+      threshold: 4,
+    });
+    const result = await fn({
+      callId: "read-call",
+      toolName: "Read",
+      toolArgs: { path: join(baseDir, "source.md") },
+      content: "hello world",
+    });
+    expect(result).not.toBeNull();
   });
 });
 

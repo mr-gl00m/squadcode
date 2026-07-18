@@ -75,13 +75,18 @@ describe("configuration stack provenance", () => {
   it("resolves CLI over user settings over environment defaults", () => {
     const loaded = buildConfigurationStack({
       cwd: process.cwd(),
-      cli: { provider: "custom", model: "custom-model" },
+      cli: {
+        provider: "custom",
+        model: "custom-model",
+        notificationSound: true,
+      },
       env: env(),
       settings: {
         version: "0.1.0",
         createdAt: "now",
         defaultProvider: "openai",
         defaultModel: "gpt-5.1",
+        notifications: { permissionSound: false },
       },
       catalog: catalog(),
       hooks: { hooks: [], invalidCount: 0 },
@@ -97,6 +102,10 @@ describe("configuration stack provenance", () => {
       "user-settings",
       "cli",
     ]);
+    expect(loaded.notifications.permissionSound).toBe(true);
+    expect(
+      loaded.stack.explain("settings.notifications.permissionSound")?.origin,
+    ).toBe("cli");
   });
 
   it("accounts for environment, settings, hooks, catalogs, and permission layers", () => {
@@ -123,6 +132,7 @@ describe("configuration stack provenance", () => {
           program: "notify-squad",
           terminalMode: "unfocused",
           terminalMethod: "bell",
+          permissionSound: false,
         },
       },
       catalog: catalog(),
@@ -159,9 +169,13 @@ describe("configuration stack provenance", () => {
       program: "notify-squad",
       terminalMode: "unfocused",
       terminalMethod: "bell",
+      permissionSound: false,
     });
     expect(
       loaded.stack.explain("settings.notifications.terminalMode")?.origin,
+    ).toBe("user-settings");
+    expect(
+      loaded.stack.explain("settings.notifications.permissionSound")?.origin,
     ).toBe("user-settings");
     expect(loaded.stack.explain("hooks.after")?.version).toBe("0.1.0");
     expect(loaded.stack.explain("hooks.invalid")?.disabledReason).toContain(

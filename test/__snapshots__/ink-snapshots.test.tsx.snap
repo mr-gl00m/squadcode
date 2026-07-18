@@ -29,6 +29,16 @@ exports[`Ink regression snapshots > pins the backtrack overlay 1`] = `
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
 `;
 
+exports[`Ink regression snapshots > pins the compact tool ledger window 1`] = `
+" … 2 earlier · 2 ok
+ ✗ [Grep] searched (?i)parser|parse · failed (GREP_BAD_REGEX)
+ ✓ [Read] read sigil_llm_adapter.py
+ ✓ [Shell] ran git diff --stat HEAD~3..HEAD
+ ⊘ [Shell] ran rm -rf build · denied
+ ▸ [Shell] ran git log --all --oneline -30
+ ▸ [Grep] preparing arguments (46 B)"
+`;
+
 exports[`Ink regression snapshots > pins the kill picker 1`] = `
 "╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Kill which subagent? (esc to cancel)                                                             │
@@ -48,5 +58,6 @@ exports[`Ink regression snapshots > pins the permission overlay 1`] = `
 
 exports[`Ink regression snapshots > pins the status footer 1`] = `
 " YOLO  ·  PLAN  ·  deepseek/deepseek-v4-pro  ·  turns 3 (last: in 12k [25% cached] · out 800 ·
- ~$0.021)  ·  total in 40k [25% cached] · out 2.4k  ·  ~$0.084 est  ·  streaming (Ctrl-C aborts)"
+ ~$0.021)  ·  total in 40k [25% cached] · out 2.4k  ·  ~$0.084 est  ·  streaming (Ctrl-C aborts ·
+ Ctrl-O detail)"
 `;

@@ -22,6 +22,7 @@ function config(
   return {
     terminalMode: "off",
     terminalMethod: "osc9",
+    permissionSound: true,
     ...overrides,
   };
 }
