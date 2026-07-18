@@ -314,17 +314,17 @@ Squad Code is MIT and it stays MIT. A lot of agent CLIs went source-available or
 
 The honest part: I develop this on unpaid time, and that has a ceiling. There's a point where pouring hours into this instead of paid work stops making sense, and at that point development just stops. The code stays free and public, but it freezes at whatever the last release was. Donations are what raise the ceiling. They're the difference between another year of features and a frozen repo. If Squad Code is saving you a subscription to someone's closed tool, sending a slice of that here is what keeps it both free and moving.
 
-## Support me
+## Support
 
-If you find this useful, consider supporting me and my research:
+If my work is interesting or useful to you, consider tossing something my way; it goes toward rent, food, and energy drinks, and every bit is genuinely appreciated.
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/mr_gl00m)
 [![GitHub Sponsors](https://img.shields.io/badge/GitHub_Sponsors-EA4AAA?style=for-the-badge&logo=github&logoColor=white)](https://github.com/sponsors/mr-gl00m)
 
 **Crypto:**
-- BTC: `bc1qnedeq3dr2dmlwgmw2mr5mtpxh45uhl395prr0d`
-- ETH: `0x1bCbBa9854dA4Fc1Cb95997D5f42006055282e3c`
-- SOL: `3Wm8wS93UpG2CrZsMWHSspJh7M5gQ6NXBbgLHDFXmAdQ`
+- BTC: ```bc1qnedeq3dr2dmlwgmw2mr5mtpxh45uhl395prr0d```
+- ETH: ```0x1bCbBa9854dA4Fc1Cb95997D5f42006055282e3c```
+- SOL: ```3Wm8wS93UpG2CrZsMWHSspJh7M5gQ6NXBbgLHDFXmAdQ```
 
 ## Contributing
 
