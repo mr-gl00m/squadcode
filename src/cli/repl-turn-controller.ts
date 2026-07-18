@@ -48,9 +48,21 @@ import type { ToolRegistry } from "../tools/registry.js";
 import type { YoloSession } from "../yolo/index.js";
 import { persistEventToStore } from "./persist-event.js";
 import { formatElapsed, formatTokenCount } from "./repl-composer.js";
-import { formatBytes, formatToolPreview } from "./repl-presentation.js";
 import type { ActivityState, HistoryEntry } from "./repl-types.js";
 import { AssistantTextReflow } from "./text-reflow.js";
+import {
+  formatBytes,
+  formatLedgerSummary,
+  formatToolPreview,
+  ledgerDelta,
+  ledgerInterrupt,
+  ledgerResult,
+  ledgerRun,
+  ledgerStart,
+  resultLineTag,
+  type ToolCallRecord,
+  type ViewMode,
+} from "./tool-ledger.js";
 
 export interface ReplTurnControllerOptions {
   activeStyle: OutputStyle | null;
@@ -85,9 +97,11 @@ export interface ReplTurnControllerOptions {
   sessionRulesRef: MutableRefObject<RuleMap>;
   systemPromptRef: MutableRefObject<string>;
   userGlobalRulesRef: MutableRefObject<RuleMap>;
+  viewModeRef: MutableRefObject<ViewMode>;
   yoloRef: MutableRefObject<YoloSession | null>;
   setActivity: Dispatch<SetStateAction<ActivityState>>;
   setIsStreaming: Dispatch<SetStateAction<boolean>>;
+  setLedger: Dispatch<SetStateAction<readonly ToolCallRecord[]>>;
   setLastTurnCachedTokens: Dispatch<SetStateAction<number>>;
   setLastTurnCost: Dispatch<SetStateAction<number>>;
   setLastTurnInputTokens: Dispatch<SetStateAction<number>>;
@@ -234,6 +248,18 @@ export function createReplTurnController(opts: ReplTurnControllerOptions): {
       turnTokens: 0,
     };
 
+    // Per-turn tool ledger. The local copy is authoritative inside this async
+    // loop; setLedger mirrors it into React state for the live compact view
+    // and the Ctrl+O replay. Cleared here, retained after the turn ends so the
+    // toggle can still dump the last turn.
+    let ledger: readonly ToolCallRecord[] = [];
+    const syncLedger = (next: readonly ToolCallRecord[]): void => {
+      ledger = next;
+      opts.setLedger(next);
+    };
+    syncLedger([]);
+    const callPreviews = new Map<string, string>();
+
     const reflow = new AssistantTextReflow();
     const effectiveSystemPrompt = composeSystemPrompt(
       opts.activeStyle,
@@ -313,6 +339,7 @@ export function createReplTurnController(opts: ReplTurnControllerOptions): {
               );
               break;
             case "tool_call_delta": {
+              syncLedger(ledgerDelta(ledger, ev.id, ev.argsDelta.length));
               const tracked = opts.argBytesRef.current;
               if (tracked && tracked.id === ev.id) {
                 tracked.bytes += ev.argsDelta.length;
@@ -336,6 +363,7 @@ export function createReplTurnController(opts: ReplTurnControllerOptions): {
               const remaining = reflow.flush();
               if (remaining) opts.appendAssistantBlock(remaining);
               opts.setStreamingText("");
+              syncLedger(ledgerStart(ledger, ev.id, ev.name));
               opts.argBytesRef.current = { id: ev.id, bytes: 0 };
               opts.setActivity({
                 kind: "tool",
@@ -344,30 +372,37 @@ export function createReplTurnController(opts: ReplTurnControllerOptions): {
               });
               break;
             }
-            case "tool_call_done":
+            case "tool_call_done": {
               opts.argBytesRef.current = null;
               turnToolCalls += 1;
+              const preview = formatToolPreview(ev.name, ev.args);
+              syncLedger(ledgerRun(ledger, ev.id, ev.name, preview));
+              callPreviews.set(ev.id, preview);
               opts.setActivity({
                 kind: "tool",
                 label: `Running ${ev.name}`,
                 toolName: ev.name,
               });
-              opts.append(
-                "tool",
-                `[${ev.name}] ${formatToolPreview(ev.name, ev.args)}`,
-              );
+              if (opts.viewModeRef.current === "detailed") {
+                opts.append("tool", `[${ev.name}] ${preview}`);
+              }
               break;
+            }
             case "tool_result": {
-              const tag = ev.ok
-                ? "ok"
-                : ev.reason === "denied"
-                  ? "denied"
-                  : ev.reason === "aborted"
-                    ? "aborted"
-                    : ev.reason === "unknown_tool"
-                      ? "unknown"
-                      : `failed${ev.error ? ` (${ev.error})` : ""}`;
-              opts.append(ev.ok ? "tool" : "error", `[${ev.name}] ${tag}`);
+              syncLedger(ledgerResult(ledger, ev.id, ev.name, ev));
+              if (opts.viewModeRef.current === "detailed") {
+                opts.append(
+                  ev.ok ? "tool" : "error",
+                  `[${ev.name}] ${resultLineTag(ev)}`,
+                );
+              } else if (!ev.ok && ev.reason !== "aborted") {
+                // Compact view stays quiet on success but failures always
+                // land in scrollback — they're the vetting signal.
+                opts.append(
+                  "error",
+                  `[${ev.name}] ${callPreviews.get(ev.id) ?? "called"} · ${resultLineTag(ev)}`,
+                );
+              }
               if (ev.name === "TodoWrite") opts.updateTodos();
               opts.setActivity({ kind: "thinking", label: "Thinking" });
               break;
@@ -474,9 +509,11 @@ export function createReplTurnController(opts: ReplTurnControllerOptions): {
       opts.setStreamingText("");
       opts.setActivity({ kind: "idle", label: "" });
       opts.abortRef.current = null;
+      syncLedger(ledgerInterrupt(ledger));
+      const toolSummary = formatLedgerSummary(ledger);
       opts.append(
         "system",
-        `• Worked for ${formatElapsed(Date.now() - turnStart)}`,
+        `• Worked for ${formatElapsed(Date.now() - turnStart)}${toolSummary === null ? "" : ` · ${toolSummary}`}`,
       );
       void notifyTurnComplete(
         opts.notifications,

@@ -47,9 +47,11 @@ import {
   PermissionOverlay,
   StatusFooter,
   TodoPanel,
+  ToolLedgerView,
 } from "./repl-presentation.js";
 import { createReplSlashContext } from "./repl-slash-context.js";
 import { createSubmitHandler } from "./repl-submit.js";
+import { useToolView } from "./repl-tool-view.js";
 import { createReplTurnController } from "./repl-turn-controller.js";
 import {
   type ActivityState,
@@ -61,7 +63,7 @@ import {
 } from "./repl-types.js";
 
 const ACCENT = "#7aa2f7";
-const VERSION = "1.9.0";
+const VERSION = "1.9.1";
 
 export function ReplApp(opts: ReplOptions): React.JSX.Element {
   const {
@@ -396,6 +398,12 @@ export function ReplApp(opts: ReplOptions): React.JSX.Element {
     }
   });
 
+  const { ledger, setLedger, viewMode, viewModeRef } = useToolView({
+    append,
+    disabled: pendingPermission !== null || backtrack.open || killPickerOpen,
+    isStreaming,
+  });
+
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
@@ -638,6 +646,8 @@ export function ReplApp(opts: ReplOptions): React.JSX.Element {
     turnDiff: turnDiffRef.current,
     turnNumber: turnCount + 1,
     updateTodos,
+    viewModeRef,
+    setLedger,
     isTerminalFocused: () => terminalFocusedRef.current,
     ...(stdout && { writeTerminal: (value: string) => stdout.write(value) }),
     abortRef,
@@ -720,6 +730,9 @@ export function ReplApp(opts: ReplOptions): React.JSX.Element {
       {todos.length > 0 && todos.some((t) => t.status !== "completed") ? (
         <TodoPanel todos={todos} />
       ) : null}
+      {isStreaming && viewMode === "compact" && ledger.length > 0 ? (
+        <ToolLedgerView ledger={ledger} />
+      ) : null}
       {isStreaming || pendingPermission ? (
         <ActivityRow
           activity={
@@ -772,6 +785,7 @@ export function ReplApp(opts: ReplOptions): React.JSX.Element {
         totalCost={totalCost}
         pendingPermission={pendingPermission !== null}
         isStreaming={isStreaming}
+        viewMode={viewMode}
       />
     </Box>
   );

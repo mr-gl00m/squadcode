@@ -3,8 +3,9 @@ import type { AnguishBand } from "./anguish.js";
 import type { AgentId, AgentStatus } from "./types.js";
 
 // HOWL: an in-process pub/sub channel for subagent lifecycle, anguish, and
-// roster changes. Clean-room rebuild of the FETCH §17.5 idea (a broadcast bus
-// the UI subscribes to), none of its code.
+// roster changes. Clean-room rebuild of a broadcast-bus idea from an earlier
+// FETCH draft (the recorded spec ends at §16 with no such section), none of
+// its code.
 //
 // Turn-buffered commit: publish() queues events; commit() flushes the whole
 // batch to every subscriber at once. The point is the Ink panel (Phase 14) —

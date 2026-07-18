@@ -18,7 +18,7 @@ import type { TodoItem } from "../tools/todo.js";
 import type { YoloSession } from "../yolo/index.js";
 import { BANNER, bannerSubtitle } from "./banner.js";
 
-const VERSION = "1.9.0";
+const VERSION = "1.9.1";
 
 export interface ReplControl {
   resumeSessionId?: string;

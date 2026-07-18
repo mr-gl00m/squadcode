@@ -23,7 +23,7 @@ import { runUsageCli } from "./usage-cli.js";
 export { permissionModeConflict } from "./runtime-resolution.js";
 export { defaultSystemPrompt } from "./system-prompt.js";
 
-const VERSION = "1.9.0";
+const VERSION = "1.9.1";
 const DESCRIPTION =
   "Provider-neutral local-first CLI agent: streaming, tool use, sessions, permissions across DeepSeek, OpenAI, and Anthropic.";
 

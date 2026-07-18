@@ -117,6 +117,8 @@ const HELP = [
   "/shootout <models>    vet a prompt across models — run `squad shootout <prompt> --models <a,b,c>`",
   "/help                 this list",
   "/exit, /quit          exit the REPL",
+  "",
+  "Ctrl+O                toggle tool output view: compact (default) or detailed; switching to detailed replays this turn's calls",
 ].join("\n");
 
 export function handleSlash(line: string, ctx: SlashContext): SlashResult {

@@ -1,7 +1,7 @@
 import { AgentError, type AgentId } from "./types.js";
 
 // Two-letter + digit designations ("KT-4"). Clean-room rebuild — the *idea* of
-// a short call-sign is borrowed from FETCH §11, but none of its code is.
+// a short call-sign is borrowed from FETCH §10, but none of its code is.
 //
 // I and O are dropped from the letter set and 0 from the digits so a
 // designation is never misread on a busy panel (KT-4 vs KI-0). That still

@@ -56,7 +56,7 @@ import {
 import { handleSlash, type SlashContext } from "./slash.js";
 import { formatUsageReport } from "./usage-format.js";
 
-const VERSION = "1.9.0";
+const VERSION = "1.9.1";
 
 export interface SimpleReplOptions {
   provider: LLMProvider;

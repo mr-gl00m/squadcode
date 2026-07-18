@@ -9,9 +9,18 @@ import { renderAssistantLine } from "./markdown.js";
 import type { BacktrackViewState } from "./repl-backtrack.js";
 import { formatTokenCount } from "./repl-composer.js";
 import type { ActivityState, HistoryEntry } from "./repl-types.js";
+import {
+  formatLedgerCounts,
+  ledgerWindow,
+  liveRowText,
+  type ToolCallRecord,
+  type ToolCallStatus,
+  type ViewMode,
+} from "./tool-ledger.js";
 
 const ACCENT = "#7aa2f7";
 const SOFT_RED = "#f7768e";
+const SOFT_YELLOW = "#e0af68";
 const TOOL_GRAY = "#7a8294";
 const USER_DIM = "#a89984";
 
@@ -119,6 +128,7 @@ export interface StatusFooterProps {
   totalCost: number;
   pendingPermission: boolean;
   isStreaming: boolean;
+  viewMode: ViewMode;
 }
 
 export function StatusFooter(props: StatusFooterProps): React.ReactElement {
@@ -149,64 +159,79 @@ export function StatusFooter(props: StatusFooterProps): React.ReactElement {
         {" · out "}
         {formatTokenCount(props.totalOutputTokens)}
         {props.totalCost > 0 ? `  ·  ~${formatCost(props.totalCost)} est` : ""}
+        {props.viewMode === "detailed" ? "  ·  detail view (Ctrl-O)" : ""}
         {props.pendingPermission
           ? "  ·  awaiting permission"
           : props.isStreaming
-            ? "  ·  streaming (Ctrl-C aborts)"
+            ? `  ·  streaming (Ctrl-C aborts${props.viewMode === "compact" ? " · Ctrl-O detail" : ""})`
             : ""}
       </Text>
     </Box>
   );
 }
 
-export function formatBytes(value: number): string {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-}
+// Live tool window for the compact view: one row per call in flight or
+// recently finished, updated in place. Finalized detail never lands in
+// scrollback here — failures are appended by the turn controller and the
+// rest collapses into the turn-close summary line.
+const LEDGER_WINDOW_ROWS = 6;
 
-export function formatToolPreview(name: string, args: unknown): string {
-  if (!args || typeof args !== "object") return "called";
-  const values = args as Record<string, unknown>;
-  switch (name) {
-    case "Read":
-      return `read ${shortPath(values.path)}`;
-    case "Write":
-      return `wrote ${shortPath(values.path)}`;
-    case "Edit":
-      return `edited ${shortPath(values.path)}`;
-    case "Glob":
-      return `matched ${truncateText(stringOr(values.pattern, "?"), 60)}`;
-    case "Grep": {
-      const pattern = truncateText(stringOr(values.pattern, "?"), 50);
-      const where =
-        typeof values.path === "string" ? ` in ${shortPath(values.path)}` : "";
-      return `searched ${pattern}${where}`;
-    }
-    case "Shell":
-      return `ran ${truncateText(stringOr(values.command, ""), 80)}`;
-    case "TodoWrite": {
-      const count = Array.isArray(values.todos) ? values.todos.length : 0;
-      return `updated checklist (${count} item${count === 1 ? "" : "s"})`;
-    }
-    default:
-      return "called";
+function ledgerGlyph(status: ToolCallStatus): string {
+  switch (status) {
+    case "preparing":
+    case "running":
+      return "▸";
+    case "ok":
+      return "✓";
+    case "failed":
+    case "unknown":
+      return "✗";
+    case "denied":
+      return "⊘";
+    case "aborted":
+    case "interrupted":
+      return "-";
   }
 }
 
-function stringOr(value: unknown, fallback: string): string {
-  return typeof value === "string" ? value : fallback;
+function ledgerColor(status: ToolCallStatus): string {
+  switch (status) {
+    case "preparing":
+    case "running":
+      return ACCENT;
+    case "ok":
+      return TOOL_GRAY;
+    case "failed":
+    case "unknown":
+      return SOFT_RED;
+    case "denied":
+      return SOFT_YELLOW;
+    case "aborted":
+    case "interrupted":
+      return TOOL_GRAY;
+  }
 }
 
-function shortPath(value: unknown): string {
-  if (typeof value !== "string") return "?";
-  if (value.length <= 60) return value;
-  return `...${value.slice(value.length - 57)}`;
-}
-
-function truncateText(value: string, length: number): string {
-  if (value.length <= length) return value;
-  return `${value.slice(0, length - 3)}...`;
+export function ToolLedgerView({
+  ledger,
+}: {
+  ledger: readonly ToolCallRecord[];
+}): React.JSX.Element {
+  const view = ledgerWindow(ledger, LEDGER_WINDOW_ROWS);
+  return (
+    <Box flexDirection="column" paddingLeft={1}>
+      {view.hidden === null ? null : (
+        <Text dimColor>
+          {`… ${view.hidden.total} earlier · ${formatLedgerCounts(view.hidden)}`}
+        </Text>
+      )}
+      {view.visible.map((record) => (
+        <Text key={record.seq} color={ledgerColor(record.status)}>
+          {`${ledgerGlyph(record.status)} ${liveRowText(record)}`}
+        </Text>
+      ))}
+    </Box>
+  );
 }
 
 export function ActivityRow({

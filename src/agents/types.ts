@@ -11,8 +11,9 @@ export type AgentId = string;
 // tools/agent.ts depends on the spawn machinery in this directory.
 export const AGENT_TOOL_NAME = "Agent";
 
-// Lifecycle status. The terminal set is lifted from FETCH §12 (the Mister
-// Fetch status taxonomy this layer cherry-picks): a run ends in exactly one of
+// Lifecycle status. The task outcomes come from FETCH §11 (the acceptable
+// outcomes; §12 lists the forbidden ones) plus Squad's two kill statuses:
+// a run ends in exactly one of
 // completed / failed_unfulfilled / scope_refused / anguish_terminal /
 // user_killed / user_released. "running" is the only non-terminal state — a
 // record is created already running, because spawn launches the loop
