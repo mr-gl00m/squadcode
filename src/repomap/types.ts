@@ -35,6 +35,9 @@ export interface RepoMapOptions {
   refresh?: "auto" | "always" | "files" | "manual";
   cacheDir?: string;
   maxFileBytes?: number;
+  // Max uncached files parsed in one build; misses beyond it are skipped and
+  // stay uncached, so successive boots warm the cache progressively.
+  parseCap?: number;
 }
 
 export interface RepoMapResult {
@@ -43,4 +46,5 @@ export interface RepoMapResult {
   filesConsidered: number;
   filesIncluded: number;
   estimatedTokens: number;
+  parsesSkipped: number;
 }

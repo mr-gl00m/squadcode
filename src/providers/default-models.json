@@ -41,7 +41,7 @@
         "thinking": true,
         "cache_control": true
       },
-      "context_window": 200000,
+      "context_window": 1000000,
       "base_url_env_var": "ANTHROPIC_BASE_URL"
     },
     {
@@ -55,7 +55,35 @@
         "thinking": true,
         "cache_control": true
       },
-      "context_window": 200000,
+      "context_window": 1000000,
+      "base_url_env_var": "ANTHROPIC_BASE_URL"
+    },
+    {
+      "id": "claude-sonnet-5",
+      "provider_id": "anthropic",
+      "kind": "llm-message",
+      "base_url": "https://api.anthropic.com",
+      "env_key_var": "ANTHROPIC_API_KEY",
+      "capabilities": {
+        "tool_use": true,
+        "thinking": true,
+        "cache_control": true
+      },
+      "context_window": 1000000,
+      "base_url_env_var": "ANTHROPIC_BASE_URL"
+    },
+    {
+      "id": "claude-opus-4-8",
+      "provider_id": "anthropic",
+      "kind": "llm-message",
+      "base_url": "https://api.anthropic.com",
+      "env_key_var": "ANTHROPIC_API_KEY",
+      "capabilities": {
+        "tool_use": true,
+        "thinking": true,
+        "cache_control": true
+      },
+      "context_window": 1000000,
       "base_url_env_var": "ANTHROPIC_BASE_URL"
     },
     {
@@ -73,6 +101,19 @@
     },
     {
       "id": "gpt-5.1",
+      "provider_id": "openai",
+      "kind": "llm-response",
+      "base_url": "https://api.openai.com/v1",
+      "env_key_var": "OPENAI_API_KEY",
+      "capabilities": {
+        "tool_use": true,
+        "reasoning": true
+      },
+      "context_window": 400000,
+      "base_url_env_var": "OPENAI_BASE_URL"
+    },
+    {
+      "id": "gpt-5.6",
       "provider_id": "openai",
       "kind": "llm-response",
       "base_url": "https://api.openai.com/v1",

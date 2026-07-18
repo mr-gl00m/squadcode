@@ -3,6 +3,7 @@ import {
   type ContextFragment,
   createContextFragment,
 } from "../context/fragment.js";
+import { logger } from "../logger.js";
 import { fitToBudget } from "./budget.js";
 import { defaultCacheRoot, readCached, writeCached } from "./cache.js";
 import { buildGraph } from "./graph.js";
@@ -13,6 +14,9 @@ import type { FileSymbols, RepoMapOptions, RepoMapResult } from "./types.js";
 import { walkRepo } from "./walk.js";
 
 const DEFAULT_MAX_FILE_BYTES = 1_000_000;
+// shortcut: flat per-boot cap on uncached parses, walk-order tail skipped;
+// prioritize by recency/size if first-boot map quality on huge repos matters.
+const DEFAULT_PARSE_CAP = 300;
 
 export function repoMapFragment(text: string, cwd: string): ContextFragment {
   return createContextFragment({
@@ -36,8 +40,11 @@ export async function buildRepoMap(
   const maxFileBytes = opts.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
   const cacheRoot = opts.cacheDir ?? defaultCacheRoot(opts.cwd);
 
+  const parseCap = opts.parseCap ?? DEFAULT_PARSE_CAP;
   const symbols: FileSymbols[] = [];
   let considered = 0;
+  let parsed = 0;
+  let parsesSkipped = 0;
   for await (const entry of walkRepo(opts.cwd, maxFileBytes)) {
     considered++;
     let fs: FileSymbols | null = await readCached(
@@ -47,6 +54,14 @@ export async function buildRepoMap(
       entry.size,
     );
     if (!fs) {
+      // Skipped files stay uncached on purpose: the next build's misses start
+      // where this one stopped, so the cache warms across boots instead of
+      // one boot paying for the whole repo.
+      if (parsed >= parseCap) {
+        parsesSkipped++;
+        continue;
+      }
+      parsed++;
       fs = await extractSymbols(
         entry.path,
         entry.lang,
@@ -61,6 +76,12 @@ export async function buildRepoMap(
       symbols.push(fs);
     }
   }
+  if (parsesSkipped > 0) {
+    logger.info(
+      { parsed, parsesSkipped, considered },
+      "repomap parse cap reached; skipped files warm the cache on later boots",
+    );
+  }
 
   if (symbols.length === 0) {
     clearSourceCache();
@@ -70,6 +91,7 @@ export async function buildRepoMap(
       filesConsidered: considered,
       filesIncluded: 0,
       estimatedTokens: 0,
+      parsesSkipped,
     };
   }
 
@@ -121,6 +143,7 @@ export async function buildRepoMap(
     filesConsidered: considered,
     filesIncluded: includedFiles(candidates.slice(0, included)),
     estimatedTokens,
+    parsesSkipped,
   };
 }
 
