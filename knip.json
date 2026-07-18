@@ -1,0 +1,18 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "scripts/probe-repomap.mjs",
+    "scripts/refresh-repomap-wasm.mjs",
+    "test/manual/abort-stream.ts"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "bin/**/*.ts",
+    "scripts/**/*.mjs",
+    "test/**/*.ts",
+    "integration-tests/**/*.ts",
+    "memory-tests/**/*.ts",
+    "perf-tests/**/*.ts"
+  ],
+  "ignoreExportsUsedInFile": true
+}

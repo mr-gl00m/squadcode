@@ -1,6 +1,6 @@
 {
   "name": "squad-code",
-  "version": "1.1.0",
+  "version": "1.9.1",
   "description": "Provider-neutral local-first CLI agent: streaming, tool use, sessions, permissions across DeepSeek, OpenAI, and Anthropic.",
   "license": "MIT",
   "author": "Cid",
@@ -15,32 +15,53 @@
     "prepare": "tsc && node scripts/copy-assets.mjs",
     "start": "node dist/bin/squad.js",
     "typecheck": "tsc --noEmit",
+    "lint": "node scripts/lint-ratchet.mjs",
+    "lint:raw": "biome check",
+    "lint:fix": "biome check --write",
+    "format": "biome format --write",
+    "knip": "knip",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "deflake": "node scripts/deflake.mjs",
+    "demo:gif": "node scripts/render-demo-gif.mjs",
+    "schema:generate": "npm run build && node scripts/generate-stream-json-schema.mjs",
+    "audit:ci": "npm audit --audit-level=high"
   },
   "bin": {
     "squad": "./dist/bin/squad.js",
     "squadcode": "./dist/bin/squad.js"
   },
+  "files": [
+    "dist",
+    "assets/repomap/wasm",
+    ".env.example"
+  ],
   "dependencies": {
     "@anthropic-ai/sdk": "^0.93.0",
+    "ajv": "^8.20.0",
     "better-sqlite3": "^11.7.0",
     "commander": "^12.1.0",
     "dotenv": "^16.4.7",
+    "ignore": "^7.0.5",
     "ink": "^5.0.1",
-    "ink-text-input": "^6.0.0",
     "openai": "^4.79.0",
     "pino": "^9.6.0",
     "pino-roll": "^3.0.0",
     "react": "^18.3.1",
+    "unpdf": "^1.6.2",
+    "web-tree-sitter": "^0.25.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.16",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.12",
-    "tsx": "^4.19.0",
+    "ink-testing-library": "^4.0.0",
+    "knip": "^6.14.2",
+    "tsx": "^4.23.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "zod-to-json-schema": "^3.25.1"
   }
 }

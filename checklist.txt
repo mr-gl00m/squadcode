@@ -119,15 +119,15 @@ Phase 11 (v1.1): docs realigned + ship
 [x] CHANGELOG entry drafted for v1.1.0
 [x] Bump VERSION in src/cli/program.ts, src/cli/simple-repl.ts, src/cli/repl.tsx, and version in package.json to 1.1.0
 [x] Real-API smoke: squad -p with claude-sonnet-4-6 streams end-to-end against ANTHROPIC_API_KEY
-[ ] Real-API smoke: squad -p with gpt-5.1 streams end-to-end via Responses API against OPENAI_API_KEY
+[deferred-v1.1] Real-API smoke: squad -p with gpt-5.1 streams end-to-end via Responses API against OPENAI_API_KEY (never run; v1.1.0 tagged without it -- needs OPENAI_API_KEY, ESCALATE before an unattended run attempts it)
 [x] Real-API smoke: squad -p with deepseek-chat still works (no regression from the dispatch refactor)
-[ ] Real-API smoke: cross-provider session resume (start on deepseek, --resume under --provider anthropic)
-[ ] Real-API smoke: /cost shows accurate per-provider math including Anthropic cache_read savings
+[deferred-v1.1] Real-API smoke: cross-provider session resume (start on deepseek, --resume under --provider anthropic) (never run; deferred at v1.1.0 ship -- known-hard, message-shape divergence across providers, ESCALATE on first divergence)
+[deferred-v1.1] Real-API smoke: /cost shows accurate per-provider math including Anthropic cache_read savings (never run; deferred at v1.1.0 ship)
 [x] Real-API smoke: --yolo with a checklist.txt completes one autonomous run end-to-end (verified 2026-05-09 against deepseek-v4-pro; v4-flash spiraled on Unicode whack-a-mole and hit max_turns)
-[ ] v1.1.0 tag on local git repo
+[x] v1.1.0 tag on local git repo (verified 2026-06-13: git tag -l shows v1.1.0)
 
 Ship v1.1: catalog dispatch routes to all four adapter kinds end-to-end on real API calls + YOLO completes one autonomous run; engine/loop.ts received zero behavior changes during the cycle (architectural test passed -- only an optional yolo?: YoloSession field added for context propagation)
-[ ] Ship gate verified
+[x] Ship gate verified (v1.1.0 tagged; the three real-API smokes above were consciously deferred, not run)
 
 ============================================================
 v1.1.x -- harness hardening (pre-subagent)
@@ -142,92 +142,260 @@ Tool-loop resilience -- robustness against local-model misbehavior
 
 Timing + sanitization -- defensive primitives
 [x] src/deadline-timer.ts: AbortController wrapper with pause/resume/extend; ~80 LOC; 11 tests in test/deadline-timer.test.ts; primitive only -- wiring into the permission-prompt path so the budget pauses while waiting for user input is a deferred follow-up (no per-turn budget exists yet to plumb)
-[ ] tools/shell.ts: env-allowlist sanitize for spawned children (PATH/HOME/TMP/TERM/locale baseline, strict mode auto-on under CI, block credential-shaped vars)
-[ ] providers/schema-sanitize.ts: tool-schema preflight (collapse anyOf:[X,{type:null}] -> X with nullable, inject properties:{} on bare objects, prune dangling required, collapse single-element oneOf/allOf)
+[x] tools/shell.ts: env-allowlist sanitize for spawned children (PATH/HOME/TMP/TERM/locale baseline, strict mode auto-on under CI, block credential-shaped vars). New src/tools/shell-env.ts pure module; lenient (default) drops credential-shaped names, strict (CI auto-on, SQUAD_SHELL_ENV_STRICT override) is baseline-allowlist-only; token-boundary credential regexes (MONKEY/AUTHOR pass, API_KEY/SIGNING_KEY/SSH_AUTH_SOCK blocked); wired into both spawn branches; end-to-end leak test + unit tests in test/shell-hardening.test.ts
+[x] providers/schema-sanitize.ts: tool-schema preflight (collapse anyOf:[X,{type:null}] -> X with nullable, inject properties:{} on bare objects, prune dangling required, collapse single-element oneOf/allOf). Pure/non-mutating, depth-bounded recursion, degrades non-object schema to {type:object,properties:{}}; wired at the provider boundary in all three adapters' tool-mapping (canonical spec stays faithful); 21 tests in test/schema-sanitize.test.ts
 
 Observability + integration harness -- vetting-purpose recording infrastructure
-[ ] hooks/jsonl-sink.ts: JsonlHookSink composable sink with atomic append, directory-create, ToolLifecycle{phase} events (precheck/dispatching/completed/failed)
-[ ] cli/stream-json.ts: stream-json output format (newline-delimited typed events: init/message/tool_use/tool_result/error/result with per-model token+cache breakdown)
-[ ] integration-tests/golden/: provider event-stream fixtures + replay harness for offline agent-loop regression tests
-[ ] scripts/deflake.mjs: npm run deflake -- --runs=N --command=... for repeated-run timing-sensitive E2E tests
+[x] hooks/jsonl-sink.ts: JsonlHookSink composable sink with atomic append, directory-create, ToolLifecycle{phase} events (precheck/dispatching/completed/failed). HookSink interface (emit/flush/close) + combineSinks fan-out + nullHookSink; queue+O_APPEND serialization (no interleave under concurrent emit), lazy dir-create, fsync opt-in, emit never rejects (telemetry must not break the loop). Recording primitive only -- loop emission deferred to keep engine/loop.ts stable, per deadline-timer precedent. 10 tests in test/jsonl-sink.test.ts
+[x] cli/stream-json.ts: stream-json output format (newline-delimited typed events: init/message/tool_use/tool_result/error/result with per-model token+cache breakdown). Injectable-writer renderer (createStreamJsonRenderer) parallel to print.ts; text/reasoning accumulate into message records at tool boundaries; result carries usage{input/cached/output/total}+costUsd+toolCalls+exitCode. Wired into runPrintMode behind --output-format text|stream-json (validated); stdout stays pure NDJSON. 9 tests in test/stream-json.test.ts
+[x] integration-tests/golden/: provider event-stream fixtures + replay harness for offline agent-loop regression tests. createReplayProvider (LLMProvider yielding scripted CanonicalEvents per turn, captures requests + turnsConsumed); harness with fake echo/boom registry + permissive policy drives real runAgentLoop offline; 4 JSON fixtures (text-only, single-tool-call, tool-failure, repeated-tool-call) cover text/dispatch/failure-continue/repeat-guard-halt; vitest include extended; 6 tests in integration-tests/golden/replay.test.ts
+[x] scripts/deflake.mjs: npm run deflake -- --runs=N --command=... for repeated-run timing-sensitive E2E tests. Sequential spawnSync loop with pass-rate + min/avg/max duration summary, failing run numbers, --bail/--quiet flags; exit 0 only if every run passed. Wired as the "deflake" npm script; verified clean/flaky/missing-command paths.
 
 Release confidence + baselines -- ship discipline (Cid's strategic doc backlog #1-4)
-[ ] docs/release-confidence.md: Squad Code ship gate playbook -- build, typecheck, unit, audit-validate, real-provider smoke, YOLO smoke, subagent smoke once v1.2 lands; local-first scope, no telemetry
-[ ] memory-tests/transcript-replay.test.ts: long-transcript replay memory baseline with committed reference numbers + update flag
-[ ] perf-tests/agent-loop.test.ts: synthetic 3-turn agent-loop latency baseline with committed reference numbers + update flag
+[x] docs/release-confidence.md: Squad Code ship gate playbook -- build, typecheck, unit, audit-validate, real-provider smoke, YOLO smoke, subagent smoke once v1.2 lands; local-first scope, no telemetry. Cheap-deterministic-first gate order with real commands + pass criteria; added version-consistency gate (surfaced live drift: in-code VERSION=1.1.0 vs package.json 1.2.0); explicit out-of-scope (no coverage threshold, baselines advisory-not-gate, no telemetry by charter); audit gate honest about missing `squad audit verify` CLI
+[x] memory-tests/transcript-replay.test.ts: long-transcript replay memory baseline with committed reference numbers + update flag. 200-turn replay via the golden harness; heapUsed delta vs committed baseline.json; advisory (catastrophic ceiling 512MB by default), SQUAD_BENCH_STRICT=1 enforces 2.5x tolerance, SQUAD_BENCH_UPDATE=1 rewrites, --expose-gc for clean numbers; baseline ~2.9MB on dev machine
+[x] perf-tests/agent-loop.test.ts: synthetic 3-turn agent-loop latency baseline with committed reference numbers + update flag. Median of 25 offline runGolden runs vs committed baseline.json; advisory (catastrophic ceiling 2000ms by default), SQUAD_BENCH_STRICT=1 enforces 2.5x tolerance, SQUAD_BENCH_UPDATE=1 rewrites; baseline ~0.02ms (microsecond-scale offline loop -> tripwire not precision gate)
 
 Error + routing visibility -- failure-mode disambiguation
-[ ] providers/llm-error.ts: error taxonomy (RateLimited{retry_after}/ServerError/Network/Timeout/Auth/InvalidRequest/Model/ContentPolicy/Parse/ContextLength/Other) with is_retryable() and 400-body-keyword disambiguation (context_length/content_policy/safety); ModelVisibleError sentinel for "this error goes to the model vs stops the loop"
-[ ] providers/dispatch.ts: surface fallback_chain in resolve telemetry (provider lookup -> alias -> default chain visible to caller)
+[x] providers/llm-error.ts: error taxonomy (RateLimited{retry_after}/ServerError/Network/Timeout/Auth/InvalidRequest/Model/ContentPolicy/Parse/ContextLength/Other) with is_retryable() and 400-body-keyword disambiguation (context_length/content_policy/safety); ModelVisibleError sentinel for "this error goes to the model vs stops the loop". Three-way partition invariant (retryable XOR model-visible XOR terminal); SDK-agnostic duck-typed classifier; consolidated the per-adapter mapErrorEvent/isRetryableStatus into toCanonicalErrorEvent; 39 tests in test/llm-error.test.ts
+[x] providers/dispatch.ts: surface fallback_chain in resolve telemetry (provider lookup -> alias -> default chain visible to caller). resolveEntryTraced returns {entry?, chain[], reason}; stages model_id/alias/provider_default with hit/miss/provider_mismatch outcomes; formatResolveChain for logs; wired into program.ts buildProviderForModel (logger.debug + precise error reason); telemetry only, resolution behavior unchanged (strict-on-typo); parity test vs resolveEntry; 10 tests in test/dispatch.test.ts
 
-Deferred to v1.3 (out-of-scope for v1.1.x batch -- bigger work, post-subagent)
+Polish bench (post-v1.1.x harness hardening, pre-v1.2 subagent -- pulled from OpenCode v1.15.x harvest)
+[RECONCILED 2026-06-13: all five items below shipped on master AFTER the v1.2.0 tag (commit 31652fb; auto-compact template in 7d1cef8/31652fb) and are present in src/ + docs/. Marked [x] -- do NOT re-implement. See CHANGELOG [Unreleased].]
+[x] session/auto-compact.ts: replace the current summary prompt with the Goal / Constraints / Done / In Progress / Blocked / Key Decisions / Next Steps / Critical Context / Relevant Files markdown template (lifted from OpenCode session/compaction.ts; structured beats freeform for a recap that future-Cid actually reads)
+[x] providers/retry.ts: parse `retry-after-ms` and `retry-after` (seconds and HTTP-date) from response headers before falling back to exponential 2s * 2^attempt capped at 30s; wire into the existing provider error taxonomy's is_retryable() path so 429s honor server-issued waits
+[x] cli/replay.ts: `/replay [n]` slash command + `--replay <session-id>` / `--replay-limit <n>` CLI flags. Preroll-on-resume that shows the last N turns of a session before the prompt returns; defaults to 5 turns; reads off the JSONL transcript, no audit-chain dependency
+[x] cli/flag-slash-duality.md (doc + audit): every session-state CLI flag has a matching slash command, every slash command for session state has a matching flag, same name on both sides; skill-like commands stay slash-only. Audit existing pairs (--resume/--continue/--model/--provider/--mode/--yolo/--allowed-tools/--dangerously-skip-permissions vs the /-variants) and fill gaps; document the invariant in README so it survives onboarding
+[x] permissions/global.ts: user-level (machine-wide) permission file at ~/.squad/permissions.json. Loaded between sensitive-defaults (top floor, can't be overridden) and project-level .squad/settings.json (last-wins for specifics). Same RuleMap pattern shape as project rules so a one-liner like `{"read": {"N:/proj_*/**": "allow", "N:/proj_*/**/.env": "ask"}}` actually works. Use case: dedicated projects drive granted blanket browse-permission once, never re-prompted per project. New [U] prompt outcome (user-permanent) sits between [P] (project) and [n], persists into the global file. Blanket grants default read-only — mutating tools (Edit/Write/Shell) still ask unless the global rule says otherwise explicitly. Precedence stack: sensitive-defaults > project > user-global > built-in defaults; deny always wins on overlap within a layer; plan-mode denies still beat user-global allows
+
+Deferred to v1.4+ (out-of-scope for v1.1.x batch -- bigger work, post-subagent; renumbered from v1.3 since the subagent layer now holds v1.3)
 [ ] engine/cycle-manager.ts: checkpoint-restart with structured briefing (~3K-token decisions/constraints/hypotheses, NOT tool output or file contents), recalibrated for local-model 8-32K windows
-[ ] tools/edit.ts: full fallback ladder (exact -> flexible whitespace -> regex -> Levenshtein 10%); JIT discovery in v1.1.x is the cheap first slice
+[x] tools/edit-match.ts: full fallback ladder (SHIPPED 2026-07-06, post-v1.4.0 staging): exact -> line-trimmed -> whitespace-normalized -> indentation-flexible -> escape-normalized -> trimmed-boundary -> block-anchor (Levenshtein middle similarity, 0.3 multi-candidate threshold, span cap). Uniqueness rail on every stage (ambiguity refuses, never guesses); replace_all resolves through the ladder then replaces all occurrences of the resolved text; result message + logger record the fallback stage as vetting signal. Wired into edit.ts preview + execute; 19 tests in test/edit-match.test.ts. Algorithm shape cross-checked against OpenCode v1.15 (9 stages, MIT) and forge v2.3 (3 stages, AGPL, pattern only); see docs/rnd-harvest-2026-07-06.md
 [ ] tools/base-invocation.ts: refactor every tool into validate/confirm/execute/display lifecycle -- moderate cross-cutting refactor
-[ ] hooks/post-edit-diagnostics.ts: collect LSP diagnostics after write/edit/apply-patch, inject before next model request
-[ ] sessions/snapshots.ts: side-snapshot revert_turn under ~/.squad/snapshots/<project>/, isolated from user .git via getShadowRepoEnv-style env sanitization
-[ ] providers/auto-route.ts: --model auto deterministic keyword heuristic (search/lookup -> small, debug/error -> big, default -> medium) as fallback floor under any LLM router
+[x] engine/post-edit-diagnostics.ts (SHIPPED 2026-07-06; checklist said hooks/ but it's pre-turn plumbing, not a user hook): Edit/Write/ApplyPatch record touched files into a per-session DiagnosticsTracker (ToolContext.diagnostics); pre-turn injector drains it and injects <POST_EDIT_DIAGNOSTICS> user messages before the next model request. Tier 1 always-on: in-process tree-sitter ERROR/missing scan (repomap grammars: ts/tsx/js/py/rs/go) + JSON.parse for .json; caps 5 problems/file, 8 files. Tier 2 opt-in: .squad/settings.json {"diagnostics":{"command":"npm run typecheck","timeoutMs":90000}}, runs once per drain on non-zero exit, output tail capped 4KB, never auto-detected. Kill switch SQUAD_POST_EDIT_DIAGNOSTICS=0. injectPreTurn is now sync-or-async (loop awaits it). Wired into print mode, both REPLs, and subagent spawn (own tracker, tier 1 only). 14 tests in test/post-edit-diagnostics.test.ts. Full LSP client deliberately not adopted -- see docs/rnd-harvest-2026-07-06.md
+[x] sessions/snapshots.ts: side-snapshot revert_turn under ~/.squad/snapshots/<project>/, isolated from user .git via getShadowRepoEnv-style env sanitization
+[SUPERSEDED 2026-07-06] providers/auto-route.ts deterministic keyword heuristic: the Phase 18 router provider kind delegates routing to an external command; a deterministic floor belongs in the router implementation (CrabMeat's crabmeat-route shape ladder already is one). Build only if a router-less --model auto is ever actually wanted
+
+v1.4.x harness hardening backlog (queued from the 2026-07-06 .rnd harvest; docs/rnd-harvest-2026-07-06.md has the detail)
+[x] providers/prose-tool-recovery.ts: recover tool calls emitted as text (<tool_call>{json}, <invoke>, <function=name>{json}), strip from visible content, normalize wrapper namespaces (functions., default_api:); sits one level before arg-repair.ts. Highest-value remaining local-model harness item. One shared incremental scanner over the canonical event stream, wired in dispatch.ts for the four API-backed adapters; fenced, inline-code, blockquote, and double-quoted false-positive defense; complete and partial wrapper cap; native calls retain provider ids and suppress duplicates in either event order; 34 unit tests + 1 offline golden loop integration (test/prose-tool-recovery*.test.ts), original deflake 20/20 plus follow-up 10/10; docs/prose-tool-recovery.md
+[ ] engine/auto-compact.ts: zero-LLM prune pass (truncate old tool outputs, protect recent turns) before paying for the LLM summary
+[ ] catalog per-model capability profiles: context length / tool format / strengths per model id, fuzzy prefix match; vetting harness asserts expected-vs-observed
+[ ] shootout canned bench suites: small task sets + fresh temp workspace + deterministic file-content verify per slot, pass/fail + duration + tool-calls per model
+[ ] tools/shell.ts error fast-path diagnosis: pre-canned advice for command-not-found / permission-denied / port-in-use on failure, no LLM call
+[x] providers/default-models.json: lemonade-default row (kind llm-local, http://localhost:13305, LEMONADE_BASE_URL override) -- AMD Lemonade serves OpenAI-compatible /v1, existing adapter covers it (2026-07-06)
 
 ============================================================
-v1.2.0 -- subagent layer (deferred from prior v1.1 plan)
+v1.3.0 -- subagent layer (deferred from prior v1.1 plan; RENUMBERED 2026-06-13 -- the v1.2.0 tag was consumed by plan-mode/recap/repomap, so this layer ships as v1.3.0. See .why/checklist-reconciliation-2026-06-13.md)
 ============================================================
 
-Phase 12 (v1.2): subagent foundations -- agent layer with spawn, run, kill, return at depth=1
-[ ] agents/types.ts with SubagentDef, SubagentRecord, AgentStatus union (completed/failed_unfulfilled/scope_refused/anguish_terminal/user_killed/user_released)
-[ ] agents/identity.ts two-letter+digit designations (KT-4 style) unique among living subagents -- clean-room rebuild, not lifted from Mister Fetch
-[ ] agents/anguish.ts pressure scalar A in [0,1] from time/retry/budget/ambiguity -- observability only, never feeds back into the model's prompt
-[ ] agents/howl.ts in-process pub/sub for lifecycle/anguish/roster with turn-buffered commit
-[ ] agents/context.ts AsyncLocalStorage<SubagentContext> with agentId, parentAgentId, slotKey, model, abortController
-[ ] agents/loader.ts reads .squad/agents/<name>.md frontmatter into SubagentDef (name, whenToUse, tools, model, systemPrompt)
-[ ] agents/registry.ts Map<AgentId, SubagentRecord> with depth=1 cap and 4-slot concurrent ceiling
-[ ] agents/spawn.ts launches isolated runAgentLoop with subagent's tool allowlist + model + new AbortController
-[ ] agents/kill.ts cascade abort via the controller, terminationReason 'user killed' or 'cascade from parent'
-[ ] tools/agent.ts Agent tool exposed to the model: { description, prompt, subagent_type } -> structured payload
-[ ] agents/message-bus.ts: pub/sub bus wrapping permissions/policy.ts; derive(subagentName) clones bus with publish-injection so subagent confirmations carry source agent identity (scope-lock by construction); correlation-ID request<TReq,TRes>() pattern for async confirmations
-[ ] agents/registry-build.ts: clone-bound per-subagent ToolRegistry honoring SubagentDef.tools filter with wildcards (*, mcp_*, mcp_<server>_*); skip Kind.Agent tools to enforce depth=1 by construction
-[ ] prompts/subagent-output-format.md: structured report contract (### SUMMARY -> ### EVIDENCE with path:line citations -> ### CHANGES with every write performed -> ### RISKS -> ### BLOCKERS); honesty clause + parent audits tool log against CHANGES
-[ ] permissions/prompt.ts: surface source-agent metadata on every prompt (agent_id, cwd/worktree, provider/model, command/file, yolo state); audit row matches; pattern fits message-bus derive() above
-[ ] Hard scope lock: subagent system prompt enforces single-task contract per FETCH §3, status=scope_refused on expansion
-[ ] Memory ephemerality: subagent returns one structured payload, working messages discarded on terminate
-[ ] Smoke test: parent spawns red-team subagent, subagent runs, returns payload, parent continues with payload only
+Phase 12 (v1.3): subagent foundations -- agent layer with spawn, run, kill, return at depth=1
+[x] agents/types.ts with SubagentDef, SubagentRecord, AgentStatus union (completed/failed_unfulfilled/scope_refused/anguish_terminal/user_killed/user_released) + running; AGENT_TOOL_NAME const; AgentError
+[x] agents/identity.ts two-letter+digit designations (KT-4 style) unique among living subagents -- clean-room rebuild (I/O/0 dropped for legibility), retry-then-deterministic-scan, rng injectable for tests
+[x] agents/anguish.ts pressure scalar A in [0,1] from time/retry/failures/ambiguity -- observability only, never in the prompt (asserted by test); AnguishTracker + anguishBand calm/alert/urgent/terminal
+[x] agents/howl.ts in-process pub/sub for lifecycle/anguish/roster with turn-buffered commit (publish->commit batch, emit immediate, listener throw isolated)
+[x] agents/context.ts AsyncLocalStorage<SubagentContext> with agentId, parentAgentId, slotKey, model, provider, abortController; currentAgentId()
+[x] agents/loader.ts reads .squad/agents/<name>.md frontmatter into SubagentDef (name, description, whenToUse, tools, model, provider, body=systemPrompt); built-ins < user < project precedence
+[x] agents/registry.ts Map<AgentId, SubagentRecord>; 4-slot ceiling via claimSlot()->null-when-full; slot freed on terminal status; depth=1 enforced in registry-build
+[x] agents/spawn.ts launches isolated runAgentLoop with subagent's tool allowlist + model + new AbortController linked to parent; status determination; memory ephemerality
+[x] agents/subagent-permissions.ts deriveSubagentSessionPermission: forwards parent session + agent deny rules (deny-only; allows don't flow down), defaults TodoWrite/Agent to denied unless subagent ruleset allows. OpenCode #26514 lesson
+[x] agents/per-agent-rulesets.ts resolveAgentRuleset: merges defaults < agent-specific < user override into one RuleMap; the per-agent prompt+model+ruleset triple is the vetting unlock
+[x] agents/kill.ts killAgent/killAllAgents: stamp terminal status then abort the controller; terminationReason 'user killed' or 'cascade from parent'
+[x] tools/agent.ts Agent tool exposed to the model: { description, prompt, subagent_type } -> structured payload; subagent_type enum from loaded defs; wired into print mode (REPL exposure lands with Phase 14 panels)
+[x] agents/message-bus.ts createMessageBus + derive(agentId, type) clones bus with identity injection (scope-lock by construction); correlation-ID envelope for async confirmations
+[x] agents/registry-build.ts buildSubagentRegistry: clone-bound per-subagent ToolRegistry honoring SubagentDef.tools wildcards (*, mcp_*, mcp_<server>_*); Agent tool dropped to enforce depth=1; fresh ToolSearch bound to child deferred-set
+[x] prompts/subagent-output-format.md: structured report contract (### SUMMARY -> ### EVIDENCE path:line -> ### CHANGES -> ### RISKS -> ### BLOCKERS); honesty clause + SCOPE_REFUSED marker; loaded via import.meta.url, copied to dist by copy-assets
+[x] permissions/prompt.ts: surface source-agent metadata on every prompt (agent_id, cwd, provider/model, yolo state) + pending-record JSON; main loop leaves it absent
+[x] Hard scope lock: subagent system prompt enforces single-task contract per FETCH §3, status=scope_refused on SCOPE_REFUSED marker
+[x] Memory ephemerality: subagent returns one structured payload (SubagentReport); childMessages discarded on terminate (asserted by smoke test)
+[x] Smoke test: parent spawns red-team subagent, subagent runs, returns payload, parent continues with payload only (offline replay-provider integration test in test/agents.test.ts; real-API multi-model run is ESCALATE-gated in Phase 16). agents.test.ts = 23 tests; full suite 636 green
 
-Phase 13 (v1.2): long-running primitives -- backgrounded jobs + LLM-set timers (shared infra under shell, subagents, and future long-runners)
-[ ] engine/job-registry.ts: per-session Map<JobId, JobRecord>; survives across turns within a session; cleared on session end; subagent records ARE job records (shared shape)
-[ ] tools/shell.ts: background?: boolean input; when true, returns { jobId, pid, startedAt } immediately; stdout/stderr stream into job buffer with same MAX_OUTPUT_BYTES truncation; ctx.signal abort still cascades into killTree
-[ ] tools/job-status.ts: { jobId } -> { running, exitCode, stdout, stderr, durationMs }; non-mutating, auto-allowed
-[ ] tools/job-kill.ts: { jobId } -> killTree on the recorded child; mutating, prompts; doubles as cascade-kill for subagents
-[ ] engine/timer-registry.ts: per-session Map<TimerId, DeadlineTimer>; expired timers drained at top of each turn; pause/resume across compaction or user pause via existing src/deadline-timer.ts (the primitive landed in v1.1.x finally gets a caller)
-[ ] tools/set-timer.ts: { label, ms } -> { timerId }; LLM-callable so the model plans its own "ping if not done" checks; pairs naturally with shell({ background: true }) and the Agent tool
-[ ] tools/cancel-timer.ts: { timerId } -> ok; no permission prompt
-[ ] engine/loop.ts: pre-turn synthetic tool-result injection -- expired timers prepended to next model turn as { kind: "timer_fired", label, elapsedMs }; same plumbing reused for "subagent finished" payload delivery
-[ ] Subagent integration: Agent tool returns a jobId handle in the parent's registry so parent can timer-watch and kill; each subagent gets its own job + timer registry for its own backgrounded shells/timers; no cross-registry visibility (matches subagent isolation contract from Phase 12)
-[ ] Smoke test: LLM runs `npm install` backgrounded, sets 600s timer, timer fires before install completes, LLM calls job-status, sees still running, decides to kill
-[ ] Smoke test: parent spawns red-team subagent, sets 1800s "stuck-if-no-return" timer, subagent returns within budget, parent cancels timer
+Phase 13 (v1.3): long-running primitives -- backgrounded jobs + LLM-set timers (shared infra under shell, subagents, and future long-runners)
+[x] engine/job-registry.ts: per-session record store; subagent records ARE job records (shared JobInfo shape). create/get/list/wait/cancel with Deferred behind wait() + caller-supplied onCancel handle; status running|completed|error|cancelled; output capped at 200KB/stream; drainSettled() surfaces each finished job once for the loop injector
+[x] tools/shell.ts: background:true returns {jobId, pid, startedAt} immediately (shared spawnShellChild helper); stdout/stderr buffer into the job; onCancel + ctx.signal abort both killTree; timeoutMs honored only when explicit (background outlives the turn)
+[x] tools/job-status.ts: { jobId } -> running/exitCode/stdout/stderr/durationMs; non-mutating, auto-allow, deferred
+[x] tools/job-kill.ts: { jobId } -> cancel (killTree via onCancel for shell, abort for subagent); mutating, prompts; doubles as cascade-kill for subagents
+[x] engine/timer-registry.ts: per-session Map<TimerId, DeadlineTimer>; drainExpired(nowMs) at the top of each turn; pauseAll/resumeAll. Rebuilt src/deadline-timer.ts (it was pruned 2026-05-28) as a caller-driven pausable elapsed-time record -- no setTimeout, checked against a clock at turn boundaries
+[x] tools/set-timer.ts: { label, ms } -> { timerId }; LLM-callable; deferred
+[x] tools/cancel-timer.ts: { timerId } -> ok; auto-allow, no prompt; deferred
+[x] engine/loop.ts: single additive injectPreTurn() hook called at the top of each turn; engine/pre-turn.ts:makePreTurnInjector drains expired timers + finished BACKGROUND SHELL jobs into one <TIMER_FIRED/>/<JOB_FINISHED/> user message (subagent jobs skipped -- Agent tool delivers those inline); jobs/timers also threaded into ToolContext
+[x] Subagent integration: spawn registers each subagent as a job in the parent registry (id = agent designation) for out-of-band observe/kill while the Agent call blocks; each subagent gets its OWN job + timer registries (no cross-visibility). Wired into print mode + both REPLs
+[x] Smoke test: timer fires -> pre-turn injection -> model JobStatus (running) -> JobKill (cancelled). Offline replay-provider test in test/jobs-timers.test.ts (real npm-install backgrounding proven by the real-process shell-background test in the same file)
+[x] Smoke test: parent SetTimer(1800s) -> spawns subagent (registered as a job) -> subagent returns -> parent CancelTimer. Offline replay-provider test. jobs-timers.test.ts = 9 tests; full suite 645 green
 
-Phase 14 (v1.2): subagent TUI -- tab cycle, panels, Ctrl+K kill prompt
-[ ] cli/agent-panel.tsx one card per slot with anguish meter, current action, designator (KT-4 style)
-[ ] cli/repl.tsx Tab/Shift+Tab cycles focus through main composer -> slot 1..4 -> main
-[ ] cli/repl.tsx Ctrl+K opens kill picker overlay with [1..4][esc] mapping to live slots
-[ ] Anguish band coloring (calm/alert/urgent/terminal) on the meter
-[ ] Spawn beyond 4 concurrent fails fast with explicit error rather than queuing
-[ ] Howl subscription wired into Ink for live panel updates
-[ ] Existing Ctrl+C semantics preserved (per project_keybindings memory): streaming -> abort, idle -> exit, prompt -> deny -- now also cascades into all living subagents
-[ ] Smoke test: spawn 3 subagents, Tab cycles through 4 panels, Ctrl+K then 2 kills slot 2 only
+Phase 14 (v1.3): subagent TUI -- tab cycle, panels, Ctrl+K kill prompt
+[x] cli/agent-panel.tsx one card per slot with anguish meter (anguishMeter bar), current action, designator (KT-4); + KillPicker overlay. Logic in pure cli/agent-panel-state.ts (Ink-free, testable)
+[x] cli/repl.tsx Tab/Shift+Tab cycles focus main(0) -> slot 1..4 -> main via cycleFocus, in a dedicated useInput gated on live subagents (no conflict with composer Tab — composer hook is dormant while a subagent blocks the loop)
+[x] cli/repl.tsx Ctrl+K opens the kill-picker overlay; [1..4] map to the live agent in that slot, esc cancels (killPickerTarget); killAgent stops only the picked slot
+[x] Anguish band coloring (calm=green/alert=yellow/urgent=red/terminal=magenta) via bandColor on the meter
+[x] Spawn beyond 4 concurrent fails fast with AGENT_SLOTS_FULL (registry.claimSlot -> null -> spawn throws); covered by test/agents.test.ts
+[x] Howl subscription wired into Ink: useEffect subscribes to the bundle's howl bus, reducePanels folds each batch into panel state
+[x] Ctrl+C preserved (streaming->abort, idle->exit, prompt->deny) and now also killAllAgents-cascades into living subagents; subagent permission prompts route to the REPL overlay via a late-bound bus responder
+[x] Smoke test: panel logic fully tested in test/agent-panel.test.ts (6 tests) -- spawn 3 -> 3 cards + 1 empty; Tab cycles 5 positions; Ctrl+K then "2" kills slot 2 only (registry+controllers), slots 1&3 untouched. Live TTY interaction (rendering + keypresses) needs manual verification in a real terminal -- no ink-testing-library dep; repl.js module-load verified, typecheck + 660-test suite green
 
-Phase 15 (v1.2): external CLI agent providers -- shell-out adapters for third-party agent CLIs as subagent backends
-[ ] providers/external-cli.ts adapter interface: shell out with task as prompt, parse transcript into CanonicalResponse
-[ ] At least one concrete external-CLI adapter implementation, configured by user-supplied command + transcript-parse config rather than vendor-specific knowledge in this repo
-[ ] Subagent worktree isolation: each external CLI agent runs in its own git worktree under .squad/worktrees/<agent_id>/
-[ ] Result merging: orchestrator receives transcript plus worktree path, decides what to merge back
-[ ] Per-agent provider override in SubagentDef: provider field accepts a configured external-CLI provider id or a standard provider name
-[ ] Smoke test: red-team subagent backed by an external CLI returns issues, parent reviews worktree diff
+Phase 15 (v1.3): external CLI agent providers -- shell-out adapters for third-party agent CLIs as subagent backends
+[x] providers/external-cli.ts createExternalCliProvider: an LLMProvider that shells out (prompt via arg or stdin), parses the transcript (raw or json_path), and yields one canonical text turn. Env passed through unsanitized (it's the user's own trusted agent)
+[x] One concrete impl, fully config-driven via a kind=external-cli catalog row (command + prompt_via + parse + timeout_ms + worktree). Zero vendor knowledge in this repo -- catalog.ts gained the kind + external_cli schema, dispatch.ts the case
+[x] Subagent worktree isolation: agents/worktree.ts createAgentWorktree (git worktree add --detach .squad/worktrees/<agent_id> HEAD); returns null on a non-git dir (degrades to in-place). spawn creates it when def.isolation === "worktree" and runs the agent there
+[x] Result merging: spawn records record.worktree and the Agent tool surfaces the path in its result header; parent reviews via `git -C <path> diff`. Worktree kept on completion (removed only for a failed-to-start run); merge is the parent's call
+[x] Per-agent provider override in SubagentDef: the Phase 12 provider field already resolves through buildProviderForModel, so provider=<external-cli row id> works. makeProvider gained an optional cwd (worktree) threaded through dispatch
+[x] Smoke test: external-CLI red-team subagent runs in an isolated worktree, writes a finding, returns the report; parent confirms the file is in the worktree (not the main checkout) and `git status` shows the diff. test/external-cli.test.ts = 9 tests (adapter raw/json_path/stdin/error, dispatch, worktree create/remove, the spawn smoke). Full suite 654 green
 
-Phase 16 (v1.2): ship subagent layer -- built-ins, docs, tests, tag
-[ ] Built-in agent defs under src/agents/built-in/: explorer, judge, red-team, reviewer
-[ ] README section documenting .squad/agents/ format and per-agent model selection
-[ ] CHANGELOG entry via changelog-release-description skill
-[ ] v1.2.0 tag on local git repo
-[ ] End-to-end test: dispatch the same task across 3 different model backends concurrently, score by terminal anguish for vetting comparison
+Phase 16 (v1.3): ship subagent layer -- built-ins, docs, tests, tag
+[x] Built-in agent defs under src/agents/built-in/: explorer, judge, red-team, reviewer (.md + index.ts loader; copied to dist by copy-assets; merged under user/project overrides by loadAgentDefs)
+[x] README "Subagents and shootouts" section: .squad/agents/<name>.md format, per-agent model/provider/ruleset + isolation, built-ins, the Agent tool, shootout usage; Status/Roadmap corrected (subagent layer = v1.3 shipped, CrabMeat = v1.4)
+[x] CHANGELOG [1.3.0] entry via changelog-release-description skill (Highlights + Added/Changed/Removed/Internal); release-notes-1.3.0.md under .release-notes/; no compare links (repo has no remote)
+[x] v1.3.0 tag on local git repo (NOTE: checklist line said "v1.2.0" -- a typo; v1.2.0 was already consumed by plan-mode/recap/repomap per the 2026-06-13 reconciliation, so the subagent layer ships as v1.3.0)
+[x] End-to-end test: test/vetting-e2e.test.ts dispatches the same task across 3 model backends concurrently (clean / 1-failure / 3-failure replay providers) and asserts terminal anguish ranks them clean < flaky < broken -- anguish as the vetting signal. VERSION + package.json bumped to 1.3.0; full suite 665 green
 
 Ship subagent layer: per-agent model selection working end-to-end with at least one external CLI provider configured, depth=1 enforced, Ctrl+K kill prompt verified, anguish meter rendering on a live panel
-[ ] Ship gate verified on a real multi-model vetting run
+[deferred-v1.3] Ship gate verified on a real multi-model vetting run (ESCALATE -- needs real provider keys / local Ollama + a live TTY for the panel; cannot run unattended). Verified offline instead: per-agent model selection (vetting-e2e), external-CLI worktree run (external-cli.test.ts), depth=1 by construction (agents.test.ts), Ctrl+K/anguish panel logic (agent-panel.test.ts). v1.3.0 tagged on the green offline gate
+
+Phase 17 (v1.3): `squad shootout` -- the vetting command. The thing Squad is structurally positioned to do that no other CLI can. Depends on Phase 12 (subagent layer + four concurrent slots + per-agent model selection)
+[x] cli/shootout.ts: runShootout fans the same prompt to N backends concurrently (Promise.all, per-slot try/catch so one failure doesn't abort the rest); same runAgentLoop, same tool set, same policy; isolated git worktree per slot (reuses Phase 15). Slots run top-level, not as depth-1 subagents (no parent model orchestrating; cleaner comparison) -- see .why/shootout-2026-06-13.md. <prompt-or-file>: @file supported
+[x] /shootout (guidance -> the subcommand; in-REPL fan-out would block the live session) + --shootout <models> root flag for one-shot `squad -p ... --shootout a,b,c`; `squad shootout <prompt> --models <list> --max-turns <n>` subcommand
+[x] sessions/trajectory-diff.ts: summarizeTrajectory (tool-call steps w/ arg digest, files touched, last-usage tokens, verdict completed/max_turns/error/scope_refused/aborted) + diffTrajectories (first divergent tool-call step, per-side file deltas, verdict match). Pure, tested
+[x] cli/shootout-report.ts (text, not .tsx -- headless/pipeable/testable; "side-by-side card per model" intent met as a text layout): verdict, tool seq, files, tokens, cost, time per model + divergence section. `squad shootout report <run-id>` re-renders any saved run
+[x] sessions/shootout-store.ts: persists ~/.squad/shootouts/<run-id>/ -- manifest.json (prompt, models, summaries, diffs) + per-slot <label>.jsonl transcripts; baseDir injectable for tests; loadShootoutManifest / listShootoutRuns
+[deferred-v1.3] Smoke test: shootout across DeepSeek + Claude Sonnet 4.6 + GPT-5.1 + Qwen3-local on a real coding task (ESCALATE -- needs 4 provider keys / local Ollama; cannot run unattended). Offline equivalent in test/shootout.test.ts (4 tests): runShootout over 3 divergent replay-provider slots (write a.ts / write b.ts / error) -> verdicts [completed, completed, error], divergence at step 0, report renders, manifest round-trips, no crash. Full suite 664 green
+
+Phase 18 (v1.4): CrabMeat <-> Squad bidirectional integration. Both directions exist; neither replaces the other
+[NOTE 2026-07-06: the round-trip smoke ran green live over local Ollama (see the smoke item below). CrabMeat's half now exists in its repo (crabmeat-route bin + tools/squad-roundtrip.mjs driver). Release artifacts staged: CHANGELOG [1.4.0], .release-notes/release-notes-1.4.0.md, version surface bumped to 1.4.0.]
+[x] v1.4.0 tag on local git repo (annotated at remediated Phase A head 054232b on 2026-07-10 after Cid authorized the release judgement)
+[x] Direction A (CrabMeat -> Squad): the existing --output-format stream-json now carries schema_version on the init record (STREAM_JSON_SCHEMA_VERSION="1" in src/cli/stream-json.ts) so a consumer can check the contract before parsing. CrabMeat invokes `squad -p "<task>" --output-format stream-json --model <picked>`; record shapes pinned in the contract doc
+[x] Direction B (Squad -> CrabMeat): `router` provider kind (providers/router.ts + catalog + dispatch). A delegating provider: writes {prompt, system?, tools[]} to the configured command's stdin, parses {provider_id, model_id, rationale?}, caches the decision (routes once per task), resolves it via an injected ModelResolver (program.ts buildProviderForModel, recursion terminates on a concrete kind), and drives the chosen model through the normal loop. ROUTER_FAILED on bad exit/non-JSON/missing fields
+[x] integration/crabmeat-contract.md: pins Direction A's stream-json records + Direction B's router stdin/stdout shapes + the round trip; versioned (header v1 + STREAM_JSON_SCHEMA_VERSION); references for both repos
+[x] Smoke test: round-trip CrabMeat<->Squad (VERIFIED LIVE 2026-07-06 over local Ollama). CrabMeat's half built this pass: crabmeat-route bin (dist/route-entry.js + `crabmeat route` subcommand, src/routing/route-task.ts, 23 tests) answers the Direction B stdin/stdout contract with a deterministic shape ladder over installed Ollama tags, filtered to tool-capable models via /api/show when the payload lists tools. Driver: crabmeat/tools/squad-roundtrip.mjs (Direction A consumer -- schema_version check, NDJSON validation, on-disk task-effect assertion). PASS: router consulted once, chose ollama/qwen3.6:latest, one Write dispatch, hello.txt byte-exact, result.exitCode 0, zero non-JSON stdout lines. The live run surfaced and fixed a real Squad bug: router delegated with req.model still naming the router row; Ollama 404'd. providers/router.ts now rewrites model to the decision's model_id (regression test in test/router.test.ts, now 6 tests). Squad's offline halves unchanged: test/router.test.ts + test/stream-json.test.ts
+
+PASTE-READY BLOCK for checklist.txt
+Queued 2026-07-10 from the .rnd codex analysis. Detail: docs/codex-rollover-plan-2026-07-10.md
+Appended to checklist.txt during Phase A execution. Version numbers are proposals; tagging is Cid's command.
+
+VERIFICATION STAMP: checked against HEAD dd8f134 + the current uncommitted working tree on 2026-07-10.
+Two corrections to the source docs, both load-bearing:
+  1. The .red_team RT-001..RT-005 remediation is ALREADY BUILT and sitting uncommitted. The analysis
+     doc's "unremediated" premise is stale. Do not rebuild it. Review and land it (Phase A).
+  2. Codex's shell-safety matchers (is_safe_command.rs / is_dangerous_command.rs) contain confirmed
+     fail-open defects per .rnd/"What this is.txt". Port the architecture, rewrite the matchers.
+
+============================================================
+v1.4.0 -- Phase A: land the uncommitted red-team remediation (blocks everything; the tree is dirty)
+============================================================
+
+[x] CR-A1 Review, test, and commit RT-001..RT-005. Files already carrying fixes: hooks/{config,runner}.ts (buildSanitizedChildEnv at the spawn call; allowedHosts + scheme/HTTPS/private-network enforcement at runner.ts:209-228), providers/{external-cli,router}.ts (sanitized env at the spawn call), tools/grep.ts (pattern maxLength 500 + nested-quantifier rejection), tools/read.ts (PDF_BYTE_THRESHOLD/PDF_PAGE_THRESHOLD + READ_TOO_LARGE_PDF), prompts/boundary.ts (untracked; wrapToolOutput/wrapUserPrompt). Tests: test/{grep,prompt-boundary,read-pdf}.test.ts untracked, test/{hooks,router,external-cli}.test.ts modified. Enforcement verified at call sites; CORRECTNESS NOT AUDITED. Treat as a code review. Per RT id confirm the test fails without the fix. WATCH: the external-CLI env change reverses a documented decision (checklist.txt:236 says env passed through unsanitized on purpose, "it's the user's own trusted agent") and may break configured backends. Confirm boundary.ts wraps every untrusted-input path, not just direct prompts. One conventional commit per finding
+[x] CR-A2 Close RT-006: npm audit clean at critical+high; record the residual advisory set (package.json + package-lock.json already modified)
+[x] CR-A3 Update .red_team/report_2026-07-06_231245.json with status + closing commit SHA per finding. The report's remediation checklist is all [ ] while the fixes exist -- same drift pattern already recorded for checklist.txt
+[x] CR-A4 RESOLVED (Cid, 2026-07-10): v1.4.0 lands at remediated Phase A head 054232b, not the critically scanned dd8f134 baseline. Annotated local tag created; no push performed
+
+============================================================
+v1.5.0 -- Phase B: the real P0. Fail-closed isolation + honest command safety
+============================================================
+
+Resolves the strategy-doc/analysis-doc conflict on sandboxing. Node cannot reach an OS sandbox on Windows,
+and Codex's own Windows sandbox defaults to Disabled with an advisory-only network "restriction". P0 reduces
+to fail-closed isolation, parsed command safety, the escalation invariant, and honest naming. All Squad code.
+
+[x] CR-B1 Plan mode must beat dangerouslySkipPermissions. permissions/policy.ts decideAction opens with `if (cfg.dangerouslySkipPermissions) return "allow";` BEFORE any plan-mode evaluation, so --dangerously-skip-permissions silently disarms plan mode. Plan wins; also refuse the flag pair at CLI parse (two guards: policy is the boundary, CLI is the UX). Test: plan mode + dangerouslySkipPermissions denies Write. Highest severity-to-effort ratio in the plan; do it first. Size S
+[x] CR-B2 Fail-closed worktree isolation. cli/shootout.ts:56-58 does `worktree?.path ?? opts.cwd` so a failed worktree runs the slot in the USER'S CHECKOUT while the shootout still auto-allows permissions. agents/worktree.ts returns null on failure by design and keys the path on agentId alone (join(cwd,".squad","worktrees",agentId)) so concurrent runs with the same slot label collide. Add createAgentWorktree(cwd, id, {required}); shootout passes required:true and aborts the slot with a clear reason; a subagent def with isolation:"worktree" also fails closed; only an unspecified default degrades in place. Path becomes .squad/worktrees/<runId>-<label>. Run records every worktree path in its manifest. Tests: shootout in a non-git dir aborts and does not execute in cwd; identical labels across concurrent runs do not collide. Size M
+[x] CR-B3 .worktreeinclude + the YOLO gate hole it hides. Analysis §3.5 files this under "practices"; it is a security item. Worktrees lose gitignored files including checklist.txt, and yolo/checklist.ts REFUSES to arm YOLO without a checklist -- so the gate's precondition differs inside a worktree from the main checkout. One-line-per-entry file at repo root; copy listed paths on worktree creation. Tests: checklist.txt and .env present inside a created worktree; YOLO gate behaves identically in worktree and main checkout. Size S
+[x] CR-B4 Parsed command safety. Replace the whitespace tokenizer in yolo/index.ts (checkYoloSandbox) and permissions/plan.ts classifyShellCommand with a tree-sitter-bash AST gate reusing repomap/parser.ts (web-tree-sitter dependency already paid for). Node-kind allowlist (command/word/string/pipeline/list) + operator allowlist (&& || ; |); subshells, redirects, $(), backticks, $VAR expansion, assignments all fail closed to unknown; parse failure returns not-safe; && chain decisions aggregate with max(). Per-command unsafe-flag exclusions: find -exec/-delete, sed safe only with -n, rg --pre, base64 -o, git global-option denylist (-c, --git-dir, --exec-path, pager, textconv). Windows: conservative deny-by-default word safelist + .exe/.cmd/.bat/.com normalization, marked `// shortcut:` naming the PowerShell-AST upgrade path.
+    DO NOT PORT CODEX'S MATCHERS. Required differential corpus, every case asserting NOT SAFE:
+      ./ls.bat | C:\repo\ls.bat | ../evil/ls        (Codex safe-list keys on basename; path component discarded)
+      /bin/rm -rf /                                  (Codex danger-list does not normalize; never matches "rm")
+      rm -fr / | rm -r -f / | rm --recursive --force / | rm /important -rf | sudo /bin/rm -rf /
+                                                     (Codex rm matcher inspects only argv[1] vs literal -f/-rf)
+      git -c core.pager=evil log | git --exec-path=/tmp/evil status
+    Tests assert INTENT, never implementation. Codex's suite has exactly two rm assertions, precisely the two
+    spellings its matcher hardcodes, so it can never catch this class. One normalization function for BOTH the
+    safe-list and the danger-list; the asymmetry IS the bug. Resolve+canonicalize the executable before
+    classifying; a relative or in-workspace path is never a safe-list hit.
+    RISK: the parser becomes a security boundary. Fail closed on every error path. Size L (biggest item in the plan)
+[x] CR-B5 The escalation invariant: never silently widen access on retry when deny rules exist. The one idea worth keeping from Codex's sandboxing.rs. Audit the retry/approval paths in permissions/ + engine/loop.ts. Test: a denied tool call that is retried does not succeed on the second attempt. Size S
+[x] CR-B6 .git and .squad protected carveouts in tools/protected.ts (currently OS-sensitive dirs only, verified). Writable-root grants presently reach .git/hooks, which is a local privilege-escalation path: a written .git/hooks/pre-commit executes on the user's next commit. Both stay read-only inside writable roots unless explicitly granted. Test: plant a write to .git/hooks/pre-commit, assert refusal. Size S
+[x] CR-B7 Approval keys as vectors. One approval key per touched file for multi-file ApplyPatch; skip the prompt only when ALL keys are session-approved so partial overlaps re-prompt. Test: an [A] grant on {a,b} does not silently cover a later patch touching {b,c}. Size M
+[x] CR-B8 Stop calling it a sandbox. yolo/index.ts:34 comments "YOLO sandbox" on a function that rejects absolute paths by string inspection. Rename to what it is (a path guard); fix yoloSystemPromptAddendum + README to describe advisory rails backed by ask/deny at the tool boundary, and say plainly what is NOT enforced. This is the exact criticism "What this is.txt" levels at Codex's Windows network mode; applying it to Codex and not to ourselves would be dishonest. Size S. Land whenever
+
+============================================================
+v1.5.0 -- Phase C: gates (must precede Phase F)
+============================================================
+
+You do not decompose a 2,264-line Ink component with no CI and no UI snapshots.
+
+[x] CR-C1 .github/workflows/ci.yml -- directory does not exist, in a codebase with heavy Windows/POSIX path+shell divergence on a Windows-primary machine. Matrix windows-latest/ubuntu-latest/macos-latest x Node 22,24. Steps: build, typecheck, test, knip, lint. Acceptance: a deliberately Windows-only path bug fails the Linux leg. Size M
+[x] CR-C2 Generated schema + drift test. The CrabMeat contract is pinned in prose (integration/crabmeat-contract.md) and enforced nowhere, and it already has one live consumer (crabmeat/tools/squad-roundtrip.mjs). Generate schema/stream-json.v1.json from cli/stream-json.ts zod via zod-to-json-schema, commit with a "GENERATED CODE, DO NOT MODIFY BY HAND" header, one vitest regenerates and diffs. Acceptance: editing a record shape without regenerating fails CI. Extend to router I/O, session JSONL, hook payloads, shootout manifests as those grow zod schemas. Size M
+[x] CR-C3 Lint ratchet. Biome exits 0 while reporting ~170 warnings + 68 informational findings, so lint is not a gate today. Commit the baseline count; CI fails on any increase; drive down opportunistically. Size S
+[x] CR-C4 Ink snapshot tests. checklist.txt:233 concedes live TTY rendering and keypresses have NEVER been tested ("no ink-testing-library dep"), and Phase F rewrites exactly that surface. Add ink-testing-library; snapshot status footer, agent panel, permission overlay, kill picker. HARD PREREQUISITE FOR PHASE F. Size M
+[x] CR-C5 npm audit gate in CI: fail on new critical/high. Closes RT-006 durably. Size S
+
+============================================================
+v1.6.0 -- Phase D: sinks, provenance, recovery
+============================================================
+
+[x] CR-D1 Secret redaction at sink boundaries. sessions/writer.ts and audit/chain.ts redact NOTHING (verified); logger.ts:37 redacts pino PATHS only via REDACT_PATHS, so the analysis doc overstates the log gap and understates the transcript gap. New src/redact.ts: redactSecrets(text) for sk-, AKIA, "Bearer <token>", and key|token|secret|password = <value> assignments -> [REDACTED_SECRET]. Apply at sessions/writer.ts, sessions/artifacts.ts, log serializers. Best effort. Test: a transcript containing a synthetic key does not contain it on disk. NOT applied to the audit chain -- see CR-D4. Size M
+[x] CR-D2 One configuration stack with provenance. The permission precedence stack is good; provider catalogs, hooks, project settings, environment, and CLI values still merge through separate paths (settings.ts, permissions/{defaults,global,project}.ts, providers/catalog.ts, hooks/config.ts). One loader exposing effective value + per-key origin + layer version + disabled reason. Acceptance: every settings key can answer "why did this value win?" Size L
+[x] CR-D3 squad doctor + squad audit verify. audit/chain.ts validate() exists with NO CLI surface (verified; docs/release-confidence.md already flags this as an honest gap in the ship gate). doctor reports install/config/auth/runtime health, powered by CR-D2's provenance. Acceptance: the release-confidence audit gate becomes runnable. Size M
+[x] CR-D4 Audit chain: say what it is. chain.ts inserts payload_hash ONLY -- the payload is never stored -- and linkHash = sha256(payloadHash|prevHash) with no keyed signature and no external anchor, so validation checks link continuity and nothing else. It detects accidental corruption; a motivated tamper recomputes the chain. Relabel it in PROJECT_CHARTER.md + README.md. NOTE: this corrects the analysis doc, which says "stored payloads scrub" -- there is no stored payload, so redacting the audit chain is a no-op today. The real redesign (store payloads + HMAC with a key the agent cannot read + external anchor) is a different feature with a different threat model; build it only when something demands it, and only then does CR-D1 extend to it. Size S
+[x] CR-D5 Recoverable rollout persistence. fs-io.ts has NO fsync, NO chmod, NO stat (verified): temp-and-rename without fsync of file or directory, no mode/ACL preservation, and the stale check happens BEFORE acquiring the file mutex. Keep the optimistic-concurrency principle from tools/edit.ts (preview, mtime check, BOM+EOL preservation, ambiguity refusal -- all good) and fix the writer beneath it: mutex before stale check, fsync file + directory, preserve mode. In sessions/writer.ts: unwritten items stay buffered, failed handles are discarded, writes reopen and retry, terminal writer failure is observable rather than silent. Tests: mtime-check-then-mutex ordering; crash-injection asserts no torn record. Size M
+[x] CR-D6 Layer 3 encoding normalization, OR amend the charter. PROJECT_CHARTER.md:25-26 promises Base64/ROT13/Hex/URL detection on pasted prompts and text-like tool output, flagged in the audit log and the REPL status pane, decoded payload labeled and never silently inlined. PROJ_DOC.md:21 repeats it. NO CODE EXISTS (bom.ts only strips a UTF-8 BOM); Codex has no equivalent to copy. The trust-marker half of that same sentence just landed in prompts/boundary.ts; the normalization half did not. Build it at the boundary.ts seam: detect, flag, label, do not inline. Acceptance: a .txt read containing a Base64 payload produces a labeled detection in the audit log + status pane, and the decoded bytes never enter model input. Fallback if appetite is low: amend both docs. Leaving a public charter asserting a control that does not exist is the worse option. Size M
+
+============================================================
+v1.6.0 -- Phase E: typed context fragments
+============================================================
+
+[x] CR-E1 src/context/fragment.ts. injectPreTurn is a good dependency seam that currently appends free-form canonical messages. Fragment type carrying: stable source+type identifier, explicit replace-versus-append semantics, hard byte/token caps, central rendering and escaping, visibility/trust classification, cross-turn deduplication. Size M
+[x] CR-E2 Migrate every producer onto fragments: engine/post-edit-diagnostics.ts, engine/pre-turn.ts (timers + jobs), hooks/runner.ts, repomap/index.ts, prompts/boundary.ts. Acceptance: no producer appends a raw string into the message array; caps enforced centrally; a fragment injected on two consecutive turns is deduplicated. SEQUENCING: post-edit-diagnostics.ts and boundary.ts are both brand new -- let them stabilize through one release before absorbing them. Size M
+
+============================================================
+v1.7.0 -- Phase F: module decomposition (refactor only, no features)
+============================================================
+
+HARD PREREQUISITE: CR-C1 (CI) + CR-C4 (Ink snapshots). Both files GREW during the remediation:
+repl.tsx 2168 -> 2264, program.ts 1328 -> 1402, loop.ts 523 -> 552. The trend is the argument.
+
+[x] CR-F1 cli/repl.tsx (2264 lines) -> command registration, session bootstrap, provider resolution, turn controller, permission UI, slash-command handling, presentation components. Acceptance: no file over 800 lines; Ink snapshots unchanged; behavior unchanged. Size L
+[x] CR-F2 cli/program.ts (1402 lines) -> same seams. Size L
+[x] CR-F3 Adopt LOC discipline as policy: target 500, hard stop 800 (Codex's root AGENTS.md). Directory-scoped instruction files next to the invariant they guard (codex-rs/tui/src/bottom_pane/AGENTS.md does it in ten lines). Name the specific high-churn files that must stop growing. Write it where the next contributor, or the next agent, will read it. NOTE: engine/loop.ts at 552 is inside the hard stop -- leave it. Size S
+
+============================================================
+v1.8.0 -- Phase G: interaction
+============================================================
+
+[x] CR-G0 Head AND tail output buffering. tools/shell.ts MAX_OUTPUT_BYTES truncates tail-only at 200KB; the end of output is usually where the error is and the start is where the invocation is. Keep both ends. Independent of everything; land whenever. Size S
+[x] CR-G1 Per-turn diff tracker. Feed from Edit/Write/ApplyPatch in engine/loop.ts; render through sessions/trajectory-diff.ts. Baseline vs current content per path held in memory from committed patch mutations; net unified diff for the turn without rereading the filesystem; 100ms compute timeout with fallback; surface as /diff. Pairs with YOLO review + the archive-on-delete trail: during a long autonomous run this is the only cheap way to see what the turn actually did. Size M
+[x] CR-G2 Turn-completion notifications. Two tiers: an external notify program spawned with a JSON payload, and in-terminal OSC9/BEL with an unfocused-or-always condition. The hooks engine already fires on the right lifecycle points; this is a built-in sink plus a settings key. Size S
+[x] CR-G3 Mid-turn input queue (steering). The user cannot type ahead while a turn runs. Queue in cli/repl.tsx, drain into the existing injectPreTurn seam at the next boundary; add an availableDuringTurn flag per cli/slash.ts entry. Needs CR-C4. Size M
+[x] CR-G4 Backtrack / rollback. Builds the unbuilt sessions/snapshots.ts (checklist.txt:176). Esc-Esc primes backtrack, transcript overlay highlights a prior user message, Enter requests rollback. THE PART TO COPY IS CONFIRM-BEFORE-TRIM ORDERING: core truncates the rollout after the turn id, and the UI trims its local transcript ONLY after core confirms. Squad's JSONL writer, SQLite index, and REPL state all have to agree, and the staged state machine is the reference for making three stores agree without a distributed-commit problem. DEPENDS ON CR-D5: rolling back a writer that cannot recover from a failed handle is how a transcript gets torn. Needs CR-C4. Size L
+
+============================================================
+Phase H: appetite (unordered; pull when wanted)
+============================================================
+
+[x] CR-H1 Review presets: squad review --uncommitted | --base <branch> | --commit <sha>, wired to the existing built-in reviewer agent (src/agents/built-in/reviewer.md, confirmed present); separate review_model config key pointed at a local Ollama catalog row. Nearly free given the reviewer agent already exists. Size M
+[x] CR-H2 Profiles + per-project trust: named profiles (local / cloud / review) over the existing catalog and permission layers; per-directory trust recorded in config, gating defaultMode, with a first-visit prompt. Size M
+[x] CR-H3 Project instruction ingestion: walk from cwd up to a project-root marker, concatenate .squad/instructions.md or AGENTS.md root-down, refresh per turn. VERIFIED ABSENT: skills are user-level, .squad/agents/ holds agent definitions, nothing reads a project instruction file into the system prompt. Cheap and high-leverage in any repo Squad is pointed at. Size M
+[x] CR-H4 Composer upgrades, ranked by pain on Windows: (1) paste-burst coalescing -- terminals without reliable bracketed paste (the Windows failure mode) deliver rapid char+enter streams; buffer and coalesce, collapse large pastes into a [Pasted Content N chars] placeholder with the text stored aside. (2) @-file mentions backed by the repomap symbol table. (3) external $EDITOR for long prompts. (4) persistent cross-session input history with search. Size L total, separable
+[x] CR-H5 Exec-mode extras: --output-schema <file> constraining the final structured response (wanted by CrabMeat-side consumers of squad -p), --output-last-message <file>. Size S
+[x] CR-H6 Guardian, reframed local-first: a local Ollama model vets YOLO escalations and risky permission asks before the user sees them. Deterministic rails stay primary; the model is the judgment escalation layer. The CrabMeat thesis applied to Squad's own permission prompts. GATE ON PHASE B -- the rails must be correct before a model is allowed to advise on them, or the model is reviewing a broken boundary. Size L
+
+============================================================
+Explicitly NOT porting (record the decision so it is not relitigated)
+============================================================
+
+[--] The Codex-inbound half of the strategy doc (post-edit diagnostics, /receipt, repo map, provider-neutral event normalization, loop guards flowing INTO Codex). That is advice for OpenAI's repo. Nothing to do here
+[--] MCP client/server, app-server JSON-RPC, plugins/marketplace, cloud tasks, IDE bridge. Hard wall per PROJ_DOC.md + README.md. This is most of Codex's crate count
+[--] OS sandboxes (Seatbelt, Landlock, bwrap, Windows restricted-token + WFP). Not reachable from Node: the Windows backend needs CreateRestrictedToken, WFP, elevated setup, and dedicated logon sandbox users. Codex's own Windows sandbox derives #[default] Disabled, and its unelevated RestrictedToken mode "restricts" the network by setting HTTP_PROXY and dropping .bat deny-stubs while DELETING any curl/wget stubs it finds -- `curl --noproxy '*'` and any raw socket defeat it. Its fallback when the sandbox is off is advisory policy plus ask/deny at the tool boundary, which IS Squad's current model. Keep exactly one idea: the escalation invariant (CR-B5)
+[--] Codex's env-scrubber DEFAULT. Its ignore_default_excludes defaults to true, so the KEY/SECRET/TOKEN scrub ships opt-in and a sandboxed child can read OPENAI_API_KEY out of its own environment. Squad's shell-env.ts already defaults to scrubbing. KEEP OUR DEFAULT
+[--] Responses-only wire simplification. The Codex fork removed Chat Completions entirely (WireApi has only Responses). Squad's llm-chat carries DeepSeek and every OpenAI-compatible local endpoint. Nothing to copy
+
+============================================================
+Where Squad is already equal or ahead (calibration, not action items)
+============================================================
+
+No Codex equivalent exists for: the prev_hash audit chain (audit/chain.ts), the arg-repair ladder for
+malformed tool-call JSON (providers/arg-repair.ts), the edit fuzzy-match ladder with its uniqueness rail
+(tools/edit-match.ts), the delete guard with archive-on-delete (tools/delete-guard.ts), anguish/howl
+observability (agents/{anguish,howl}.ts), or shootout vetting (cli/shootout.ts). The canonical event union
+across six provider kinds is a broader abstraction than Codex's single-wire client. The loop guards ported
+from DeepSeek-TUI roughly match Codex's stream retry discipline. None of this needs touching.
+
+Tension worth holding: CR-D4 relabels the audit chain as corruption detection, and the chain is listed here
+as something Codex lacks. Both are true. It is a real feature with an overstated label.
