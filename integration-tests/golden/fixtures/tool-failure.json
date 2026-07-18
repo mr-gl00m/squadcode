@@ -1,0 +1,15 @@
+{
+  "name": "tool-failure",
+  "description": "Turn 0 calls boom (which fails), turn 1 recovers with text. A single failure must not halt the loop; the loop should emit a failed tool_result then continue.",
+  "turns": [
+    [
+      { "type": "tool_call_start", "id": "b1", "name": "boom" },
+      { "type": "tool_call_done", "id": "b1", "name": "boom", "args": {} },
+      { "type": "done", "reason": "tool_use" }
+    ],
+    [
+      { "type": "text_delta", "text": "Recovered." },
+      { "type": "done", "reason": "stop" }
+    ]
+  ]
+}

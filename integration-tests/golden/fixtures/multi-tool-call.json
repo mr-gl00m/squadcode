@@ -1,0 +1,17 @@
+{
+  "name": "multi-tool-call",
+  "description": "Turn 0 emits two distinct echo calls in one assistant turn; turn 1 wraps up with text. The loop should dispatch both calls in order, emit both tool_results, then the final text, consuming exactly two turns.",
+  "turns": [
+    [
+      { "type": "tool_call_start", "id": "m1", "name": "echo" },
+      { "type": "tool_call_done", "id": "m1", "name": "echo", "args": { "value": "first" } },
+      { "type": "tool_call_start", "id": "m2", "name": "echo" },
+      { "type": "tool_call_done", "id": "m2", "name": "echo", "args": { "value": "second" } },
+      { "type": "done", "reason": "tool_use" }
+    ],
+    [
+      { "type": "text_delta", "text": "Both done." },
+      { "type": "done", "reason": "stop" }
+    ]
+  ]
+}

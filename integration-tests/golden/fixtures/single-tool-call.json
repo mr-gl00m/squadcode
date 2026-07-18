@@ -1,0 +1,16 @@
+{
+  "name": "single-tool-call",
+  "description": "Turn 0 calls echo, turn 1 wraps up with text. The loop should run the tool, emit a tool_result, then the final text, consuming exactly two turns.",
+  "turns": [
+    [
+      { "type": "tool_call_start", "id": "c1", "name": "echo" },
+      { "type": "tool_call_delta", "id": "c1", "argsDelta": "{\"value\":\"hi\"}" },
+      { "type": "tool_call_done", "id": "c1", "name": "echo", "args": { "value": "hi" } },
+      { "type": "done", "reason": "tool_use" }
+    ],
+    [
+      { "type": "text_delta", "text": "Echoed it." },
+      { "type": "done", "reason": "stop" }
+    ]
+  ]
+}

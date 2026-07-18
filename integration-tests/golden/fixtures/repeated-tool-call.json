@@ -1,0 +1,18 @@
+{
+  "name": "repeated-tool-call",
+  "description": "The same echo call (identical args) emitted on three consecutive turns with nothing fresh mixed in. The repeat-guard should halt at the 3rd with a REPEATED_TOOL_CALLS error rather than burn maxTurns.",
+  "turns": [
+    [
+      { "type": "tool_call_done", "id": "r1", "name": "echo", "args": { "value": "again" } },
+      { "type": "done", "reason": "tool_use" }
+    ],
+    [
+      { "type": "tool_call_done", "id": "r2", "name": "echo", "args": { "value": "again" } },
+      { "type": "done", "reason": "tool_use" }
+    ],
+    [
+      { "type": "tool_call_done", "id": "r3", "name": "echo", "args": { "value": "again" } },
+      { "type": "done", "reason": "tool_use" }
+    ]
+  ]
+}

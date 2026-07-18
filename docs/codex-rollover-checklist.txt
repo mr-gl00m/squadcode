@@ -1,0 +1,133 @@
+PASTE-READY BLOCK for checklist.txt
+Queued 2026-07-10 from the .rnd codex analysis. Detail: docs/codex-rollover-plan-2026-07-10.md
+Appended to checklist.txt during Phase A execution. Version numbers are proposals; tagging is Cid's command.
+
+VERIFICATION STAMP: checked against HEAD dd8f134 + the current uncommitted working tree on 2026-07-10.
+Two corrections to the source docs, both load-bearing:
+  1. The .red_team RT-001..RT-005 remediation is ALREADY BUILT and sitting uncommitted. The analysis
+     doc's "unremediated" premise is stale. Do not rebuild it. Review and land it (Phase A).
+  2. Codex's shell-safety matchers (is_safe_command.rs / is_dangerous_command.rs) contain confirmed
+     fail-open defects per .rnd/"What this is.txt". Port the architecture, rewrite the matchers.
+
+============================================================
+v1.4.0 -- Phase A: land the uncommitted red-team remediation (blocks everything; the tree is dirty)
+============================================================
+
+[x] CR-A1 Review, test, and commit RT-001..RT-005. Files already carrying fixes: hooks/{config,runner}.ts (buildSanitizedChildEnv at the spawn call; allowedHosts + scheme/HTTPS/private-network enforcement at runner.ts:209-228), providers/{external-cli,router}.ts (sanitized env at the spawn call), tools/grep.ts (pattern maxLength 500 + nested-quantifier rejection), tools/read.ts (PDF_BYTE_THRESHOLD/PDF_PAGE_THRESHOLD + READ_TOO_LARGE_PDF), prompts/boundary.ts (untracked; wrapToolOutput/wrapUserPrompt). Tests: test/{grep,prompt-boundary,read-pdf}.test.ts untracked, test/{hooks,router,external-cli}.test.ts modified. Enforcement verified at call sites; CORRECTNESS NOT AUDITED. Treat as a code review. Per RT id confirm the test fails without the fix. WATCH: the external-CLI env change reverses a documented decision (checklist.txt:236 says env passed through unsanitized on purpose, "it's the user's own trusted agent") and may break configured backends. Confirm boundary.ts wraps every untrusted-input path, not just direct prompts. One conventional commit per finding
+[x] CR-A2 Close RT-006: npm audit clean at critical+high; record the residual advisory set (package.json + package-lock.json already modified)
+[x] CR-A3 Update .red_team/report_2026-07-06_231245.json with status + closing commit SHA per finding. The report's remediation checklist is all [ ] while the fixes exist -- same drift pattern already recorded for checklist.txt
+[x] CR-A4 RESOLVED (Cid, 2026-07-10): v1.4.0 lands at remediated Phase A head 054232b, not the critically scanned dd8f134 baseline. Annotated local tag created; no push performed
+
+============================================================
+v1.5.0 -- Phase B: the real P0. Fail-closed isolation + honest command safety
+============================================================
+
+Resolves the strategy-doc/analysis-doc conflict on sandboxing. Node cannot reach an OS sandbox on Windows,
+and Codex's own Windows sandbox defaults to Disabled with an advisory-only network "restriction". P0 reduces
+to fail-closed isolation, parsed command safety, the escalation invariant, and honest naming. All Squad code.
+
+[x] CR-B1 Plan mode must beat dangerouslySkipPermissions. permissions/policy.ts decideAction opens with `if (cfg.dangerouslySkipPermissions) return "allow";` BEFORE any plan-mode evaluation, so --dangerously-skip-permissions silently disarms plan mode. Plan wins; also refuse the flag pair at CLI parse (two guards: policy is the boundary, CLI is the UX). Test: plan mode + dangerouslySkipPermissions denies Write. Highest severity-to-effort ratio in the plan; do it first. Size S
+[x] CR-B2 Fail-closed worktree isolation. cli/shootout.ts:56-58 does `worktree?.path ?? opts.cwd` so a failed worktree runs the slot in the USER'S CHECKOUT while the shootout still auto-allows permissions. agents/worktree.ts returns null on failure by design and keys the path on agentId alone (join(cwd,".squad","worktrees",agentId)) so concurrent runs with the same slot label collide. Add createAgentWorktree(cwd, id, {required}); shootout passes required:true and aborts the slot with a clear reason; a subagent def with isolation:"worktree" also fails closed; only an unspecified default degrades in place. Path becomes .squad/worktrees/<runId>-<label>. Run records every worktree path in its manifest. Tests: shootout in a non-git dir aborts and does not execute in cwd; identical labels across concurrent runs do not collide. Size M
+[x] CR-B3 .worktreeinclude + the YOLO gate hole it hides. Analysis §3.5 files this under "practices"; it is a security item. Worktrees lose gitignored files including checklist.txt, and yolo/checklist.ts REFUSES to arm YOLO without a checklist -- so the gate's precondition differs inside a worktree from the main checkout. One-line-per-entry file at repo root; copy listed paths on worktree creation. Tests: checklist.txt and .env present inside a created worktree; YOLO gate behaves identically in worktree and main checkout. Size S
+[x] CR-B4 Parsed command safety. Replace the whitespace tokenizer in yolo/index.ts (checkYoloSandbox) and permissions/plan.ts classifyShellCommand with a tree-sitter-bash AST gate reusing repomap/parser.ts (web-tree-sitter dependency already paid for). Node-kind allowlist (command/word/string/pipeline/list) + operator allowlist (&& || ; |); subshells, redirects, $(), backticks, $VAR expansion, assignments all fail closed to unknown; parse failure returns not-safe; && chain decisions aggregate with max(). Per-command unsafe-flag exclusions: find -exec/-delete, sed safe only with -n, rg --pre, base64 -o, git global-option denylist (-c, --git-dir, --exec-path, pager, textconv). Windows: conservative deny-by-default word safelist + .exe/.cmd/.bat/.com normalization, marked `// shortcut:` naming the PowerShell-AST upgrade path.
+    DO NOT PORT CODEX'S MATCHERS. Required differential corpus, every case asserting NOT SAFE:
+      ./ls.bat | C:\repo\ls.bat | ../evil/ls        (Codex safe-list keys on basename; path component discarded)
+      /bin/rm -rf /                                  (Codex danger-list does not normalize; never matches "rm")
+      rm -fr / | rm -r -f / | rm --recursive --force / | rm /important -rf | sudo /bin/rm -rf /
+                                                     (Codex rm matcher inspects only argv[1] vs literal -f/-rf)
+      git -c core.pager=evil log | git --exec-path=/tmp/evil status
+    Tests assert INTENT, never implementation. Codex's suite has exactly two rm assertions, precisely the two
+    spellings its matcher hardcodes, so it can never catch this class. One normalization function for BOTH the
+    safe-list and the danger-list; the asymmetry IS the bug. Resolve+canonicalize the executable before
+    classifying; a relative or in-workspace path is never a safe-list hit.
+    RISK: the parser becomes a security boundary. Fail closed on every error path. Size L (biggest item in the plan)
+[x] CR-B5 The escalation invariant: never silently widen access on retry when deny rules exist. The one idea worth keeping from Codex's sandboxing.rs. Audit the retry/approval paths in permissions/ + engine/loop.ts. Test: a denied tool call that is retried does not succeed on the second attempt. Size S
+[x] CR-B6 .git and .squad protected carveouts in tools/protected.ts (currently OS-sensitive dirs only, verified). Writable-root grants presently reach .git/hooks, which is a local privilege-escalation path: a written .git/hooks/pre-commit executes on the user's next commit. Both stay read-only inside writable roots unless explicitly granted. Test: plant a write to .git/hooks/pre-commit, assert refusal. Size S
+[x] CR-B7 Approval keys as vectors. One approval key per touched file for multi-file ApplyPatch; skip the prompt only when ALL keys are session-approved so partial overlaps re-prompt. Test: an [A] grant on {a,b} does not silently cover a later patch touching {b,c}. Size M
+[x] CR-B8 Stop calling it a sandbox. yolo/index.ts:34 comments "YOLO sandbox" on a function that rejects absolute paths by string inspection. Rename to what it is (a path guard); fix yoloSystemPromptAddendum + README to describe advisory rails backed by ask/deny at the tool boundary, and say plainly what is NOT enforced. This is the exact criticism "What this is.txt" levels at Codex's Windows network mode; applying it to Codex and not to ourselves would be dishonest. Size S. Land whenever
+
+============================================================
+v1.5.0 -- Phase C: gates (must precede Phase F)
+============================================================
+
+You do not decompose a 2,264-line Ink component with no CI and no UI snapshots.
+
+[x] CR-C1 .github/workflows/ci.yml -- directory does not exist, in a codebase with heavy Windows/POSIX path+shell divergence on a Windows-primary machine. Matrix windows-latest/ubuntu-latest/macos-latest x Node 22,24. Steps: build, typecheck, test, knip, lint. Acceptance: a deliberately Windows-only path bug fails the Linux leg. Size M
+[x] CR-C2 Generated schema + drift test. The CrabMeat contract is pinned in prose (integration/crabmeat-contract.md) and enforced nowhere, and it already has one live consumer (crabmeat/tools/squad-roundtrip.mjs). Generate schema/stream-json.v1.json from cli/stream-json.ts zod via zod-to-json-schema, commit with a "GENERATED CODE, DO NOT MODIFY BY HAND" header, one vitest regenerates and diffs. Acceptance: editing a record shape without regenerating fails CI. Extend to router I/O, session JSONL, hook payloads, shootout manifests as those grow zod schemas. Size M
+[x] CR-C3 Lint ratchet. Biome exits 0 while reporting ~170 warnings + 68 informational findings, so lint is not a gate today. Commit the baseline count; CI fails on any increase; drive down opportunistically. Size S
+[x] CR-C4 Ink snapshot tests. checklist.txt:233 concedes live TTY rendering and keypresses have NEVER been tested ("no ink-testing-library dep"), and Phase F rewrites exactly that surface. Add ink-testing-library; snapshot status footer, agent panel, permission overlay, kill picker. HARD PREREQUISITE FOR PHASE F. Size M
+[x] CR-C5 npm audit gate in CI: fail on new critical/high. Closes RT-006 durably. Size S
+
+============================================================
+v1.6.0 -- Phase D: sinks, provenance, recovery
+============================================================
+
+[x] CR-D1 Secret redaction at sink boundaries. sessions/writer.ts and audit/chain.ts redact NOTHING (verified); logger.ts:37 redacts pino PATHS only via REDACT_PATHS, so the analysis doc overstates the log gap and understates the transcript gap. New src/redact.ts: redactSecrets(text) for sk-, AKIA, "Bearer <token>", and key|token|secret|password = <value> assignments -> [REDACTED_SECRET]. Apply at sessions/writer.ts, sessions/artifacts.ts, log serializers. Best effort. Test: a transcript containing a synthetic key does not contain it on disk. NOT applied to the audit chain -- see CR-D4. Size M
+[x] CR-D2 One configuration stack with provenance. The permission precedence stack is good; provider catalogs, hooks, project settings, environment, and CLI values still merge through separate paths (settings.ts, permissions/{defaults,global,project}.ts, providers/catalog.ts, hooks/config.ts). One loader exposing effective value + per-key origin + layer version + disabled reason. Acceptance: every settings key can answer "why did this value win?" Size L
+[x] CR-D3 squad doctor + squad audit verify. audit/chain.ts validate() exists with NO CLI surface (verified; docs/release-confidence.md already flags this as an honest gap in the ship gate). doctor reports install/config/auth/runtime health, powered by CR-D2's provenance. Acceptance: the release-confidence audit gate becomes runnable. Size M
+[x] CR-D4 Audit chain: say what it is. chain.ts inserts payload_hash ONLY -- the payload is never stored -- and linkHash = sha256(payloadHash|prevHash) with no keyed signature and no external anchor, so validation checks link continuity and nothing else. It detects accidental corruption; a motivated tamper recomputes the chain. Relabel it in PROJECT_CHARTER.md + README.md. NOTE: this corrects the analysis doc, which says "stored payloads scrub" -- there is no stored payload, so redacting the audit chain is a no-op today. The real redesign (store payloads + HMAC with a key the agent cannot read + external anchor) is a different feature with a different threat model; build it only when something demands it, and only then does CR-D1 extend to it. Size S
+[x] CR-D5 Recoverable rollout persistence. fs-io.ts has NO fsync, NO chmod, NO stat (verified): temp-and-rename without fsync of file or directory, no mode/ACL preservation, and the stale check happens BEFORE acquiring the file mutex. Keep the optimistic-concurrency principle from tools/edit.ts (preview, mtime check, BOM+EOL preservation, ambiguity refusal -- all good) and fix the writer beneath it: mutex before stale check, fsync file + directory, preserve mode. In sessions/writer.ts: unwritten items stay buffered, failed handles are discarded, writes reopen and retry, terminal writer failure is observable rather than silent. Tests: mtime-check-then-mutex ordering; crash-injection asserts no torn record. Size M
+[x] CR-D6 Layer 3 encoding normalization, OR amend the charter. PROJECT_CHARTER.md:25-26 promises Base64/ROT13/Hex/URL detection on pasted prompts and text-like tool output, flagged in the audit log and the REPL status pane, decoded payload labeled and never silently inlined. PROJ_DOC.md:21 repeats it. NO CODE EXISTS (bom.ts only strips a UTF-8 BOM); Codex has no equivalent to copy. The trust-marker half of that same sentence just landed in prompts/boundary.ts; the normalization half did not. Build it at the boundary.ts seam: detect, flag, label, do not inline. Acceptance: a .txt read containing a Base64 payload produces a labeled detection in the audit log + status pane, and the decoded bytes never enter model input. Fallback if appetite is low: amend both docs. Leaving a public charter asserting a control that does not exist is the worse option. Size M
+
+============================================================
+v1.6.0 -- Phase E: typed context fragments
+============================================================
+
+[x] CR-E1 src/context/fragment.ts. injectPreTurn is a good dependency seam that currently appends free-form canonical messages. Fragment type carrying: stable source+type identifier, explicit replace-versus-append semantics, hard byte/token caps, central rendering and escaping, visibility/trust classification, cross-turn deduplication. Size M
+[x] CR-E2 Migrate every producer onto fragments: engine/post-edit-diagnostics.ts, engine/pre-turn.ts (timers + jobs), hooks/runner.ts, repomap/index.ts, prompts/boundary.ts. Acceptance: no producer appends a raw string into the message array; caps enforced centrally; a fragment injected on two consecutive turns is deduplicated. SEQUENCING: post-edit-diagnostics.ts and boundary.ts are both brand new -- let them stabilize through one release before absorbing them. Size M
+
+============================================================
+v1.7.0 -- Phase F: module decomposition (refactor only, no features)
+============================================================
+
+HARD PREREQUISITE: CR-C1 (CI) + CR-C4 (Ink snapshots). Both files GREW during the remediation:
+repl.tsx 2168 -> 2264, program.ts 1328 -> 1402, loop.ts 523 -> 552. The trend is the argument.
+
+[x] CR-F1 cli/repl.tsx (2264 lines) -> command registration, session bootstrap, provider resolution, turn controller, permission UI, slash-command handling, presentation components. Acceptance: no file over 800 lines; Ink snapshots unchanged; behavior unchanged. Size L
+[x] CR-F2 cli/program.ts (1402 lines) -> same seams. Size L
+[x] CR-F3 Adopt LOC discipline as policy: target 500, hard stop 800 (Codex's root AGENTS.md). Directory-scoped instruction files next to the invariant they guard (codex-rs/tui/src/bottom_pane/AGENTS.md does it in ten lines). Name the specific high-churn files that must stop growing. Write it where the next contributor, or the next agent, will read it. NOTE: engine/loop.ts at 552 is inside the hard stop -- leave it. Size S
+
+============================================================
+v1.8.0 -- Phase G: interaction
+============================================================
+
+[x] CR-G0 Head AND tail output buffering. tools/shell.ts MAX_OUTPUT_BYTES truncates tail-only at 200KB; the end of output is usually where the error is and the start is where the invocation is. Keep both ends. Independent of everything; land whenever. Size S
+[x] CR-G1 Per-turn diff tracker. Feed from Edit/Write/ApplyPatch in engine/loop.ts; render through sessions/trajectory-diff.ts. Baseline vs current content per path held in memory from committed patch mutations; net unified diff for the turn without rereading the filesystem; 100ms compute timeout with fallback; surface as /diff. Pairs with YOLO review + the archive-on-delete trail: during a long autonomous run this is the only cheap way to see what the turn actually did. Size M
+[x] CR-G2 Turn-completion notifications. Two tiers: an external notify program spawned with a JSON payload, and in-terminal OSC9/BEL with an unfocused-or-always condition. The hooks engine already fires on the right lifecycle points; this is a built-in sink plus a settings key. Size S
+[x] CR-G3 Mid-turn input queue (steering). The user cannot type ahead while a turn runs. Queue in cli/repl.tsx, drain into the existing injectPreTurn seam at the next boundary; add an availableDuringTurn flag per cli/slash.ts entry. Needs CR-C4. Size M
+[x] CR-G4 Backtrack / rollback. Builds the unbuilt sessions/snapshots.ts (checklist.txt:176). Esc-Esc primes backtrack, transcript overlay highlights a prior user message, Enter requests rollback. THE PART TO COPY IS CONFIRM-BEFORE-TRIM ORDERING: core truncates the rollout after the turn id, and the UI trims its local transcript ONLY after core confirms. Squad's JSONL writer, SQLite index, and REPL state all have to agree, and the staged state machine is the reference for making three stores agree without a distributed-commit problem. DEPENDS ON CR-D5: rolling back a writer that cannot recover from a failed handle is how a transcript gets torn. Needs CR-C4. Size L
+
+============================================================
+Phase H: appetite (unordered; pull when wanted)
+============================================================
+
+[x] CR-H1 Review presets: squad review --uncommitted | --base <branch> | --commit <sha>, wired to the existing built-in reviewer agent (src/agents/built-in/reviewer.md, confirmed present); separate review_model config key pointed at a local Ollama catalog row. Nearly free given the reviewer agent already exists. Size M
+[x] CR-H2 Profiles + per-project trust: named profiles (local / cloud / review) over the existing catalog and permission layers; per-directory trust recorded in config, gating defaultMode, with a first-visit prompt. Size M
+[x] CR-H3 Project instruction ingestion: walk from cwd up to a project-root marker, concatenate .squad/instructions.md or AGENTS.md root-down, refresh per turn. VERIFIED ABSENT: skills are user-level, .squad/agents/ holds agent definitions, nothing reads a project instruction file into the system prompt. Cheap and high-leverage in any repo Squad is pointed at. Size M
+[x] CR-H4 Composer upgrades, ranked by pain on Windows: (1) paste-burst coalescing -- terminals without reliable bracketed paste (the Windows failure mode) deliver rapid char+enter streams; buffer and coalesce, collapse large pastes into a [Pasted Content N chars] placeholder with the text stored aside. (2) @-file mentions backed by the repomap symbol table. (3) external $EDITOR for long prompts. (4) persistent cross-session input history with search. Size L total, separable
+[x] CR-H5 Exec-mode extras: --output-schema <file> constraining the final structured response (wanted by CrabMeat-side consumers of squad -p), --output-last-message <file>. Size S
+[x] CR-H6 Guardian, reframed local-first: a local Ollama model vets YOLO escalations and risky permission asks before the user sees them. Deterministic rails stay primary; the model is the judgment escalation layer. The CrabMeat thesis applied to Squad's own permission prompts. GATE ON PHASE B -- the rails must be correct before a model is allowed to advise on them, or the model is reviewing a broken boundary. Size L
+
+============================================================
+Explicitly NOT porting (record the decision so it is not relitigated)
+============================================================
+
+[--] The Codex-inbound half of the strategy doc (post-edit diagnostics, /receipt, repo map, provider-neutral event normalization, loop guards flowing INTO Codex). That is advice for OpenAI's repo. Nothing to do here
+[--] MCP client/server, app-server JSON-RPC, plugins/marketplace, cloud tasks, IDE bridge. Hard wall per PROJ_DOC.md + README.md. This is most of Codex's crate count
+[--] OS sandboxes (Seatbelt, Landlock, bwrap, Windows restricted-token + WFP). Not reachable from Node: the Windows backend needs CreateRestrictedToken, WFP, elevated setup, and dedicated logon sandbox users. Codex's own Windows sandbox derives #[default] Disabled, and its unelevated RestrictedToken mode "restricts" the network by setting HTTP_PROXY and dropping .bat deny-stubs while DELETING any curl/wget stubs it finds -- `curl --noproxy '*'` and any raw socket defeat it. Its fallback when the sandbox is off is advisory policy plus ask/deny at the tool boundary, which IS Squad's current model. Keep exactly one idea: the escalation invariant (CR-B5)
+[--] Codex's env-scrubber DEFAULT. Its ignore_default_excludes defaults to true, so the KEY/SECRET/TOKEN scrub ships opt-in and a sandboxed child can read OPENAI_API_KEY out of its own environment. Squad's shell-env.ts already defaults to scrubbing. KEEP OUR DEFAULT
+[--] Responses-only wire simplification. The Codex fork removed Chat Completions entirely (WireApi has only Responses). Squad's llm-chat carries DeepSeek and every OpenAI-compatible local endpoint. Nothing to copy
+
+============================================================
+Where Squad is already equal or ahead (calibration, not action items)
+============================================================
+
+No Codex equivalent exists for: the prev_hash audit chain (audit/chain.ts), the arg-repair ladder for
+malformed tool-call JSON (providers/arg-repair.ts), the edit fuzzy-match ladder with its uniqueness rail
+(tools/edit-match.ts), the delete guard with archive-on-delete (tools/delete-guard.ts), anguish/howl
+observability (agents/{anguish,howl}.ts), or shootout vetting (cli/shootout.ts). The canonical event union
+across six provider kinds is a broader abstraction than Codex's single-wire client. The loop guards ported
+from DeepSeek-TUI roughly match Codex's stream retry discipline. None of this needs touching.
+
+Tension worth holding: CR-D4 relabels the audit chain as corruption detection, and the chain is listed here
+as something Codex lacks. Both are true. It is a real feature with an overstated label.

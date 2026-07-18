@@ -1,0 +1,38 @@
+{
+  "name": "consecutive-failures",
+  "description": "Eight turns each emit a fresh (distinct-args) boom call that dispatches and fails. Distinct args keep the repeat-guard from firing, so the consecutive-failure guard is isolated: it accumulates across turns and halts on the eighth failure with REPEATED_TOOL_FAILURES rather than burn the rest of maxTurns.",
+  "turns": [
+    [
+      { "type": "tool_call_done", "id": "f1", "name": "boom", "args": { "n": 1 } },
+      { "type": "done", "reason": "tool_use" }
+    ],
+    [
+      { "type": "tool_call_done", "id": "f2", "name": "boom", "args": { "n": 2 } },
+      { "type": "done", "reason": "tool_use" }
+    ],
+    [
+      { "type": "tool_call_done", "id": "f3", "name": "boom", "args": { "n": 3 } },
+      { "type": "done", "reason": "tool_use" }
+    ],
+    [
+      { "type": "tool_call_done", "id": "f4", "name": "boom", "args": { "n": 4 } },
+      { "type": "done", "reason": "tool_use" }
+    ],
+    [
+      { "type": "tool_call_done", "id": "f5", "name": "boom", "args": { "n": 5 } },
+      { "type": "done", "reason": "tool_use" }
+    ],
+    [
+      { "type": "tool_call_done", "id": "f6", "name": "boom", "args": { "n": 6 } },
+      { "type": "done", "reason": "tool_use" }
+    ],
+    [
+      { "type": "tool_call_done", "id": "f7", "name": "boom", "args": { "n": 7 } },
+      { "type": "done", "reason": "tool_use" }
+    ],
+    [
+      { "type": "tool_call_done", "id": "f8", "name": "boom", "args": { "n": 8 } },
+      { "type": "done", "reason": "tool_use" }
+    ]
+  ]
+}

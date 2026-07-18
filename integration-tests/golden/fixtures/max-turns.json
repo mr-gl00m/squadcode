@@ -1,0 +1,18 @@
+{
+  "name": "max-turns",
+  "description": "Every turn emits a fresh (distinct-args) echo call that succeeds, so neither the repeat-guard nor the failure-guard fires. Run with maxTurns=3, the loop should exhaust its budget after three turns and emit a MAX_TURNS error rather than loop forever.",
+  "turns": [
+    [
+      { "type": "tool_call_done", "id": "t1", "name": "echo", "args": { "n": 1 } },
+      { "type": "done", "reason": "tool_use" }
+    ],
+    [
+      { "type": "tool_call_done", "id": "t2", "name": "echo", "args": { "n": 2 } },
+      { "type": "done", "reason": "tool_use" }
+    ],
+    [
+      { "type": "tool_call_done", "id": "t3", "name": "echo", "args": { "n": 3 } },
+      { "type": "done", "reason": "tool_use" }
+    ]
+  ]
+}
