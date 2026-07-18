@@ -64,6 +64,10 @@ function createLogger(): pino.Logger {
         file: LOG_FILE,
         frequency: "daily",
         mkdir: true,
+        // Bounded retention: two weeks of dailies. removeOtherLogFiles makes
+        // the cap apply to files from prior runs; squad processes are
+        // short-lived, so a per-process cap would never delete anything.
+        limit: { count: 14, removeOtherLogFiles: true },
       },
     },
   });

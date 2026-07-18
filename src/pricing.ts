@@ -5,7 +5,7 @@
 // "~estimated" — model IDs from OpenAI-compatible providers can be aliases
 // that route to a different underlying model than the rate we matched.
 //
-// Last reviewed: 2026-04. Update PRICING_AS_OF when refreshing the table.
+// Last reviewed: 2026-07. Update PRICING_AS_OF when refreshing the table.
 
 export interface ModelPricing {
   inputPerM: number;
@@ -29,15 +29,24 @@ const PRICING: Record<string, Record<string, ModelPricing>> = {
     o3: { inputPerM: 30, outputPerM: 60, contextWindow: 200_000 },
   },
   anthropic: {
+    // Cache reads bill at ~10% of base input price when cache_control markers hit.
     "claude-haiku-4-5": {
-      inputPerM: 0.8,
-      outputPerM: 4,
+      inputPerM: 1,
+      outputPerM: 5,
+      cachedInputPerM: 0.1,
       contextWindow: 200_000,
     },
     "claude-sonnet-4-6": {
       inputPerM: 3,
       outputPerM: 15,
-      contextWindow: 200_000,
+      cachedInputPerM: 0.3,
+      contextWindow: 1_000_000,
+    },
+    "claude-sonnet-5": {
+      inputPerM: 3,
+      outputPerM: 15,
+      cachedInputPerM: 0.3,
+      contextWindow: 1_000_000,
     },
     "claude-opus-4-5": {
       inputPerM: 15,
@@ -45,9 +54,16 @@ const PRICING: Record<string, Record<string, ModelPricing>> = {
       contextWindow: 200_000,
     },
     "claude-opus-4-7": {
-      inputPerM: 15,
-      outputPerM: 75,
-      contextWindow: 200_000,
+      inputPerM: 5,
+      outputPerM: 25,
+      cachedInputPerM: 0.5,
+      contextWindow: 1_000_000,
+    },
+    "claude-opus-4-8": {
+      inputPerM: 5,
+      outputPerM: 25,
+      cachedInputPerM: 0.5,
+      contextWindow: 1_000_000,
     },
   },
   deepseek: {

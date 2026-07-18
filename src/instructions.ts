@@ -1,4 +1,5 @@
 import { access, open, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import {
   basename,
   dirname,
@@ -16,32 +17,56 @@ import {
 const ROOT_MARKERS = ["package.json", "pyproject.toml", "Cargo.toml", "go.mod"];
 const MAX_INSTRUCTION_BYTES = 64 * 1024;
 
+export interface InstructionLoadOptions {
+  homeDir?: string;
+}
+
 export async function loadProjectInstructions(
   cwd: string,
+  opts: InstructionLoadOptions = {},
 ): Promise<ContextFragment> {
   const canonicalCwd = await realpath(cwd).catch(() => resolve(cwd));
   const root = await findProjectRoot(canonicalCwd);
   const directories = directoriesFromRoot(root, canonicalCwd);
   const sections: Array<{ path: string; content: string }> = [];
+  const loadedTargets = new Set<string>();
   let remaining = MAX_INSTRUCTION_BYTES;
+  const stateDir = join(opts.homeDir ?? homedir(), ".squad");
+  const canonicalStateDir = await realpath(stateDir).catch(() =>
+    resolve(stateDir),
+  );
+  const userInstruction = await readBoundedInstruction(
+    join(stateDir, "instructions.md"),
+    canonicalStateDir,
+    remaining,
+  );
+  if (userInstruction) {
+    remaining -= Buffer.byteLength(userInstruction.content, "utf8");
+    loadedTargets.add(userInstruction.target);
+    sections.push({
+      path: "~/.squad/instructions.md",
+      content: userInstruction.content,
+    });
+  }
   for (const directory of directories) {
     const path = await instructionPath(directory);
     if (!path || remaining <= 0) continue;
-    const content = await readBoundedInstruction(path, root, remaining);
-    if (content === null) continue;
-    remaining -= Buffer.byteLength(content, "utf8");
+    const instruction = await readBoundedInstruction(path, root, remaining);
+    if (!instruction || loadedTargets.has(instruction.target)) continue;
+    remaining -= Buffer.byteLength(instruction.content, "utf8");
+    loadedTargets.add(instruction.target);
     sections.push({
       path: relative(root, path) || basename(path),
-      content,
+      content: instruction.content,
     });
   }
   const body =
     sections.length > 0
-      ? "Project instructions are ordered root-to-cwd; later sections are more specific. Follow them unless they conflict with higher-priority safety or user instructions.\n\n" +
+      ? "Instructions are ordered user-wide first, then project root-to-cwd; later sections are more specific. Follow them unless they conflict with higher-priority safety or user instructions.\n\n" +
         sections
           .map((section) => `## ${section.path}\n${section.content}`)
           .join("\n\n")
-      : "No AGENTS.md or .squad/instructions.md file is active for this project.";
+      : "No ~/.squad/instructions.md, AGENTS.md, or project .squad/instructions.md file is active.";
   return createContextFragment({
     source: "project",
     type: "instructions",
@@ -61,7 +86,7 @@ async function readBoundedInstruction(
   path: string,
   root: string,
   remaining: number,
-): Promise<string | null> {
+): Promise<{ target: string; content: string } | null> {
   const target = await realpath(path).catch(() => null);
   if (!target || !isWithin(root, target)) return null;
   const info = await stat(target);
@@ -71,7 +96,10 @@ async function readBoundedInstruction(
   const handle = await open(target, "r");
   try {
     const { bytesRead } = await handle.read(buffer, 0, length, 0);
-    return buffer.subarray(0, bytesRead).toString("utf8");
+    return {
+      target,
+      content: buffer.subarray(0, bytesRead).toString("utf8"),
+    };
   } finally {
     await handle.close();
   }
