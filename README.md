@@ -26,6 +26,17 @@ Squad Code is a streaming agent CLI: chat, tool use, sessions, ask/allow/deny pe
 
 Requires Node 22+ and a key for at least one provider (or a running local Ollama).
 
+The fast path is the prebuilt tarball attached to the [latest release](https://github.com/mr-gl00m/squadcode/releases/latest); no build step:
+
+```bash
+npm install -g https://github.com/mr-gl00m/squadcode/releases/download/v1.9.1/squad-code-1.9.1.tgz
+squad
+```
+
+Keys go in `~/.squad/.env` (user-wide) or a `.env` in the directory you run from; the project-local file wins. Variable names are in `.env.example`.
+
+Or clone and build:
+
 ```bash
 git clone https://github.com/mr-gl00m/squadcode
 cd squadcode
@@ -57,7 +68,7 @@ node dist/bin/squad.js --provider ollama --model llama3.2
 node dist/bin/squad.js --provider lemonade --model Qwen3-0.6B-GGUF
 ```
 
-`npm install -g .` (or `npm link`) puts `squad` and `squadcode` on your PATH if you'd rather not type the full path.
+From a clone, `npm install -g .` (or `npm link`) puts `squad` and `squadcode` on your PATH if you'd rather not type the full path.
 
 State lives under `~/.squad/`: settings, rotating logs, JSONL session transcripts, and the `audit.db` SQLite file. Nothing leaves the machine except calls to the provider you configured.
 
@@ -314,17 +325,17 @@ Squad Code is MIT and it stays MIT. A lot of agent CLIs went source-available or
 
 The honest part: I develop this on unpaid time, and that has a ceiling. There's a point where pouring hours into this instead of paid work stops making sense, and at that point development just stops. The code stays free and public, but it freezes at whatever the last release was. Donations are what raise the ceiling. They're the difference between another year of features and a frozen repo. If Squad Code is saving you a subscription to someone's closed tool, sending a slice of that here is what keeps it both free and moving.
 
-## Support
+## Support me
 
-If my work is interesting or useful to you, consider tossing something my way; it goes toward rent, food, and energy drinks, and every bit is genuinely appreciated.
+If you find this useful, consider supporting me and my research:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/mr_gl00m)
 [![GitHub Sponsors](https://img.shields.io/badge/GitHub_Sponsors-EA4AAA?style=for-the-badge&logo=github&logoColor=white)](https://github.com/sponsors/mr-gl00m)
 
 **Crypto:**
-- BTC: ```bc1qnedeq3dr2dmlwgmw2mr5mtpxh45uhl395prr0d```
-- ETH: ```0x1bCbBa9854dA4Fc1Cb95997D5f42006055282e3c```
-- SOL: ```3Wm8wS93UpG2CrZsMWHSspJh7M5gQ6NXBbgLHDFXmAdQ```
+- BTC: `bc1qnedeq3dr2dmlwgmw2mr5mtpxh45uhl395prr0d`
+- ETH: `0x1bCbBa9854dA4Fc1Cb95997D5f42006055282e3c`
+- SOL: `3Wm8wS93UpG2CrZsMWHSspJh7M5gQ6NXBbgLHDFXmAdQ`
 
 ## Contributing
 
